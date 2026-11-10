@@ -1,42 +1,127 @@
 # 🎙️ Dhwani (ध्वनि / ధ్వని / ಧ್ವನಿ / த்வனி / ध्वनि / ଧ୍ୱନି)
-### Pan-Indian Multilingual Autonomous Voice Operating System for Android
+### Autonomous Pan-Indian Voice Operating System for Android
+**100% Hands-Free & Eyes-Free Smartphone Control for the Blind, Rural Citizens, Elderly, and Vernacular Speakers**
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Android 10-15](https://img.shields.io/badge/android-10--15%20(One%20UI%20%2F%20AOSP)-green.svg)](https://developer.android.com/)
-[![Gnani.ai Voice](https://img.shields.io/badge/voice-Gnani.ai%20Prisma%20%26%20Timbre%20v3.0-orange.svg)](https://gnani.ai)
-[![Latency](https://img.shields.io/badge/fast--path-12ms%20ADB%20Intent-brightgreen.svg)]()
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-
-**Dhwani** (*Sanskrit/Hindi/Telugu/Kannada for "Sound / Voice"*) is an accessibility-first, autonomous mobile voice operating system built specifically for the **elderly, visually impaired, physically disabled, and vernacular Indian language speakers**.
-
-Dhwani empowers users who cannot read English or navigate dense touchscreens to control their Android smartphone entirely through natural, colloquial speech across **7 Indian languages** (Telugu, Tamil, Kannada, Hindi, Marathi, Odia, and Indian English), with real-time auditory step-by-step feedback.
+[![Gnani.ai Voice](https://img.shields.io/badge/Powered%20By-Gnani.ai%20STT%20%26%20TTS%20APIs-orange.svg?style=for-the-badge&logo=sound)](https://gnani.ai)
+[![Gnani Hackathon](https://img.shields.io/badge/Built%20For-Gnani.ai%20Hackathon%202026-blueviolet.svg?style=for-the-badge)](https://gnani.ai)
+[![Accessibility](https://img.shields.io/badge/Accessibility-Blind%20%26%20Elderly%20First-green.svg?style=for-the-badge)](https://developer.android.com)
+[![Fast Path](https://img.shields.io/badge/Fast--Path-12ms%20Instant%20Execution-brightgreen.svg?style=for-the-badge)]()
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=for-the-badge)](LICENSE)
 
 ---
 
-## 🌟 Why Dhwani?
+## 🏆 Built for the Gnani.ai Hackathon
 
-Traditional voice assistants (Siri, Google Assistant, Alexa) are heavily English-centric, fail on native Indic grammatical structures (Subject-Object-Verb / SOV), struggle with Indian English colloquialisms, and halt when an app or contact isn't found. 
-
-Dhwani introduces a fundamentally different paradigm:
-1. **Accessibility First (Blind & Elderly)**: Speaks every action aloud at each step via high-fidelity Indian TTS (`Lakshmi`). Users always know what is happening without looking at the screen.
-2. **Dual-Speed Execution Architecture**:
-   - **⚡ 12ms Fast-Path Intent Engine**: High-frequency tasks (calling, WhatsApp messaging, hardware controls, app switching, YouTube searches) bypass heavy LLMs and execute instantly via direct ADB Android intents.
-   - **🤖 Artemis Autonomous Vision Agent**: Complex, dynamic, multi-step tasks across third-party apps automatically route to an autonomous multimodal vision agent powered by OpenRouter / Gemini 2.5 Flash.
-3. **Colloquial & Vernacular Phonetic Normalizer**: Understands native Indic scripts, transliterated Hinglish/Tanglish/Teluglish, and common speech recognition distortions (`"what's up"`, `"thasup"` $\rightarrow$ `"whatsapp"`; `"touch light"` $\rightarrow$ `"flashlight"`).
-4. **Interactive Disambiguation & Cross-App Fallback**: If a contact or app isn't found, Dhwani never hangs. It finds the nearest phonetic match (e.g. *Rakesh* $\rightarrow$ *Rahul*) or installed category alternatives (e.g. *Blinkit* $\rightarrow$ *Zepto*) and politely asks for confirmation.
-5. **Hardware Integration for Samsung One UI & AOSP**: Tested on physical hardware (Samsung Galaxy A36), overcoming One UI-specific constraints such as Quick Settings hardware tile flashlight toggling and live contact database querying.
+> [!IMPORTANT]
+> **Dhwani** was conceptualized and built for the **Gnani.ai Hackathon**. 
+> The core technological backbone of this project is powered by **Gnani.ai's Conversational AI Platform**, utilizing **Gnani's Speech-to-Text (STT) and Text-to-Speech (TTS) APIs** to break the literacy and language barrier for over 500 million underserved Indian citizens.
 
 ---
 
-## 🌐 Supported Languages & Dialects
+## 🇮🇳 The Problem: The Digital Divide in India
 
-Dhwani integrates **Gnani.ai Prisma v3.0 STT** and **Timbre v3.0 TTS** for pan-Indian vernacular support:
+Over **500 million people in India**—including the **visually impaired, illiterate individuals, rural citizens, and elderly elders**—own or have access to a smartphone but cannot effectively use it. 
 
-| Language | Code | Native Script | Spoken Example | Normalized Intent |
+### Why Current Solutions Fail:
+1. **Dense, Visual-Only User Interfaces**: Modern mobile operating systems (Android, iOS) require reading text, recognizing icons, dismissing system popups, and navigating complex nested menus. For a blind or illiterate person, a touchscreen is a flat piece of glass with no feedback.
+2. **English-Centric Voice Assistants**: Mainstream assistants (Siri, Alexa, Google Assistant) are architected for English and formal grammar. They fail on rural dialects, colloquial pronunciations, and Subject-Object-Verb (SOV) Indic sentence structures.
+3. **No Continuous Auditory Feedback**: When Google Assistant performs an action, it often renders a silent card or web link on the screen. A blind user cannot see whether their message was sent or what failed.
+4. **App Inactivity**: Traditional assistants can only launch an app or search Google. They cannot autonomously navigate inside third-party apps to click buttons, fill forms, or complete real-world tasks.
+
+---
+
+## 💡 What is Dhwani?
+
+**Dhwani** (*Sanskrit & Indic for "Sound / Voice"*) is an **Autonomous Voice Operating System for Android** that transforms any Android smartphone into a **100% voice-driven, eyes-free companion**.
+
+With Dhwani, users **never have to look at the screen or touch the phone**. They speak naturally in their mother tongue—**Telugu, Tamil, Kannada, Hindi, Marathi, Odia, or Indian English**—and Dhwani autonomously operates the device, executing tasks and speaking aloud every action at each step.
+
+```
+                     🗣️ Natural Vernacular Voice
+                 ("నాన్న కి వాట్సాప్ మెసేజ్ పెట్టు...")
+                                    │
+                                    ▼
+       ┌────────────────────────────────────────────────────────┐
+       │   GNANI.AI PRISMA v3.0 MULTILINGUAL SPEECH-TO-TEXT     │
+       │     (Native Indic Scripts, Dialects & Accents)         │
+       │       te-IN | ta-IN | kn-IN | hi-IN | mr-IN | or-IN    │
+       └────────────────────────────┬───────────────────────────┘
+                                    │ Raw Transcript
+                                    ▼
+       ┌────────────────────────────────────────────────────────┐
+       │     4-STAGE PAN-INDIAN PHONETIC & SOV NORMALIZER       │
+       │   • Translates Indic verbs (తెరువు/खोलो ➔ open)       │
+       │   • Fixes colloquialisms ("what's up" ➔ whatsapp)      │
+       │   • Inverts SOV grammar (నాన్న కి కాల్ ➔ call nanna)    │
+       │   • Fuzzy matches nearest contacts & app names         │
+       └────────────────────────────┬───────────────────────────┘
+                                    │ Clean Intent
+                                    ▼
+                     ┌─────────────────────────────┐
+                     │   DUAL-SPEED ROUTING CORE   │
+                     └──────────────┬──────────────┘
+                                    │
+             ┌──────────────────────┴──────────────────────┐
+             │                                             │
+      [Daily Essentials]                             [Complex Tasks]
+             │                                             │
+             ▼                                             ▼
+  ┌───────────────────────┐                     ┌──────────────────────┐
+  │  ⚡ 12ms FAST-PATH   │                     │  🤖 AUTONOMOUS AGENT │
+  │ • Instant Phone Calls │                     │ • Multimodal Vision  │
+  │ • Direct WhatsApp Msg │                     │ • UI Element Ground  │
+  │ • Hardware Controls   │                     │ • In-App Navigation  │
+  │ • Battery / Volume    │                     │ • Form Filling       │
+  └──────────┬────────────┘                     └──────────┬───────────┘
+             │                                             │
+             └──────────────────────┬──────────────────────┘
+                                    │ Real-Time Milestones
+                                    ▼
+       ┌────────────────────────────────────────────────────────┐
+       │      GNANI.AI TIMBRE v3.0 TEXT-TO-SPEECH (TTS)         │
+       │    Continuous Spoken Audio Feedback at Every Step      │
+       │   ("Opening WhatsApp... finding contact... message sent")
+       └────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🆚 Why Dhwani vs. Google Assistant?
+
+| Feature | Google Assistant | Dhwani (ध्वनि) |
+| :--- | :--- | :--- |
+| **Target Audience** | Tech-literate, urban English/Hindi speakers | **Blind, visually impaired, rural citizens, illiterate individuals, elderly** |
+| **Language Understanding** | Rigid keywords; struggles with regional rural phrasing | **Powered by Gnani.ai STT** across 7 Indian languages with deep vernacular dialect support |
+| **Indic Grammar (SOV)** | Fails or gets confused on Subject-Object-Verb phrasing | **Native SOV-to-SVO grammar inverter** (*"నాన్న కి కాల్ చేయి"* $\rightarrow$ `call nanna`) |
+| **Colloquial Misinterpretations** | Often searches Google when slang or accent is used | **4-Stage Phonetic Normalizer** auto-corrects (`"what's up"` / `"thasup"` $\rightarrow$ WhatsApp, `"touch light"` $\rightarrow$ Flashlight) |
+| **Auditory Feedback for the Blind** | Frequently silent; displays visual cards or web links on screen | **Continuous, step-by-step spoken feedback** via **Gnani.ai Timbre TTS** for every action |
+| **In-App Task Automation** | Cannot navigate or interact inside third-party apps | **Autonomous Multimodal Vision Agent** navigates apps, taps buttons, and completes workflows |
+| **Missing Contact Recovery** | Says *"Contact not found"* and stops | **Phonetic Nearest-Match Confirmation** (e.g., *Rakesh* not found $\rightarrow$ asks *"Did you mean Rahul?"*) |
+| **Missing App Recovery** | Tells the user to install the app and terminates | **Cross-App Category Fallback** (e.g., *Blinkit* missing $\rightarrow$ *"Blinkit not installed, opening Zepto instead"*) |
+| **Execution Latency** | 3 – 6 seconds per turn via multi-hop cloud | **12ms Fast-Path Execution** for direct OS calls, messages, and hardware toggles |
+| **Emergency Voice Stop** | Unreliable when tasks or media are active | **Global Voice VAD Interrupt**: saying *"Stop" / "ఆపు" / "रुको"* immediately kills the active task |
+
+---
+
+## 🎙️ Powered by Gnani.ai Voice APIs
+
+Dhwani leverages the full power of **Gnani.ai's Conversational AI Suite**:
+
+### 1. Gnani.ai Prisma Speech-to-Text (STT)
+- **High-Accuracy Vernacular Recognition**: Accurately transcribes spoken Indian languages even with thick regional accents, colloquial phrasing, and background acoustic noise.
+- **Dynamic Voice Activity Detection (VAD)**: Real-time RMS audio chunking detects when speech starts and stops with zero hardcoded timers, cutting off silence dynamically (0.8s) for sub-second response times.
+
+### 2. Gnani.ai Timbre Text-to-Speech (TTS)
+- **Human-Grade Vernacular Voices**: Generates natural, warm, and highly intelligible Indian speech using the `Lakshmi` voice model.
+- **Accessibility Audio Milestones**: Every milestone in an execution sequence (e.g. launching dialer, opening chat, toggling flashlight, error recovery) is immediately synthesized into speech, ensuring blind users never experience silence or uncertainty.
+
+### 🌐 Supported Indian Languages
+
+| Language | Gnani Code | Native Script | Spoken Example | Normalized Intent |
 | :--- | :--- | :--- | :--- | :--- |
 | **Telugu** | `te-IN` | తెలుగు | *"నాన్న కి కాల్ చేయి"* / *"వాట్సాప్ తెరువు"* | `call nanna` / `open whatsapp` |
 | **Tamil** | `ta-IN` | தமிழ் | *"அப்பாவுக்கு கால் பண்ணு"* / *"யூடியூப் ஓபன்"* | `call appa` / `open youtube` |
-| **Kannada** | `kn-IN` | ಕನ್ನಡ | *"ಅಪ್ಪನಿಗೆ ಕಾಲ್ ಮಾಡು"* / *"ಟಾರ್ಚ್ ಆನ್ ಮಾಡು"* | `call appa` / `turn on flashlight` |
+| **Kannada** | `kn-IN` | ಕನ್ನಡ | *"ಅಪ್ಪನಿಗೆ ಕಾಲ್ ಮಾಡು"* / *"ಟಾರ್ಚ್ ఆನ್ ಮಾಡು"* | `call appa` / `turn on flashlight` |
 | **Hindi** | `hi-IN` | हिन्दी | *"पापा को कॉल करो"* / *"व्हाट्सएप खोलो"* | `call papa` / `open whatsapp` |
 | **Marathi** | `mr-IN` | मराठी | *"बाबांना कॉल करा"* / *"मेसेज पाठवा"* | `call baba` / `send message` |
 | **Odia** | `or-IN` | ଓଡ଼ିଆ | *"ବାପାଙ୍କୁ କଲ୍ କର"* / *"ଖୋଲ ୟୁଟ୍ୟୁବ୍"* | `call bapa` / `open youtube` |
@@ -44,110 +129,45 @@ Dhwani integrates **Gnani.ai Prisma v3.0 STT** and **Timbre v3.0 TTS** for pan-I
 
 ---
 
-## 🏗️ Architecture Overview
+## ⚡ Core Innovations & Features
 
-```
-                      🎙️ Spoken Voice / Web Console / PTT [Space]
-                                       │
-                                       ▼
-                  ┌──────────────────────────────────────────┐
-                  │   Dynamic Silence VAD (RMS Chunking)     │
-                  └────────────────────┬─────────────────────┘
-                                       │ Raw Audio (.wav)
-                                       ▼
-                  ┌──────────────────────────────────────────┐
-                  │    Gnani.ai Prisma v3.0 Multilingual STT │
-                  └────────────────────┬─────────────────────┘
-                                       │ Raw Transcript
-                                       ▼
-                  ┌──────────────────────────────────────────┐
-                  │  4-Stage Pan-Indian Phonetic Normalizer  │
-                  │  • Indic Dictionary & Action Mappings    │
-                  │  • Colloquialism & STT Distortions       │
-                  │  • SOV-to-SVO Grammar Inversion          │
-                  │  • Two-Tier Fuzzy Contact Matching       │
-                  └────────────────────┬─────────────────────┘
-                                       │ Clean Normalized Command
-                                       ▼
-                     ┌────────────────────────────────────┐
-                     │ Intent Classifier & Router Engine  │
-                     └───────┬────────────────────┬───────┘
-                             │                    │
-              [Sub-100ms Known Action]    [Complex Multi-Step Task]
-                             │                    │
-                             ▼                    ▼
-             ┌─────────────────────────┐  ┌─────────────────────────┐
-             │ ⚡ Fast-Path ADB Engine │  │ 🤖 Artemis Vision Agent │
-             │ • am start ACTION_CALL  │  │ • OpenRouter 2.5 Flash  │
-             │ • WhatsApp Direct URL   │  │ • Screenshot Grounding  │
-             │ • Samsung QS Flashlight │  │ • Multi-turn Action Loop│
-             │ • Volume / Battery / UI │  │ • Human-in-the-Loop VAD │
-             └───────────────┬─────────┘  └─────────────┬───────────┘
-                             │                          │
-                             └────────────┬─────────────┘
-                                          │
-                                          ▼
-                  ┌──────────────────────────────────────────┐
-                  │   Timbre v3.0 Step-by-Step Spoken TTS    │
-                  │        (Lakshmi Universal Voice)         │
-                  └──────────────────────────────────────────┘
-```
+### 1. 12ms Fast-Path Intent Engine vs. Autonomous Vision Agent
+Dhwani employs an intelligent **dual-speed execution architecture**:
+- **⚡ 12ms Fast-Path Engine**: High-frequency essential tasks (placing phone calls, sending WhatsApp messages, toggling the flashlight, adjusting volume, checking battery level, opening known apps) bypass heavy vision models and execute in **12 milliseconds** via direct Android OS intents and ADB shell commands.
+- **🤖 Autonomous Vision Agent Fallback**: When a user gives an open-ended or complex multi-step command (e.g., *"Open gallery and send the first photo to Rahul"* or *"Search for Telugu devotional songs on YouTube and play the second video"*), Dhwani activates its multimodal vision agent to inspect the live screen, ground buttons, and autonomously navigate third-party apps.
+
+### 2. 4-Stage Pan-Indian Phonetic & Grammar Normalizer
+Rural and vernacular users often speak with colloquialisms, English transliterations, or grammatical structures that crash standard parsers:
+- **Stage A (Native Script & Indic Verb Mapping)**: Maps native scripts and transliterated Hinglish/Tanglish/Teluglish verbs (`తెరువు`, `खोलो`, `thira`, `kholo`, `open pannu`) to canonical operational intents (`open`, `call`, `send message`, `turn on`, `turn off`).
+- **Stage B (Phonetic App & Hardware Corrections)**: Fixes common speech recognition distortions:
+  - `"what's up"`, `"whats up"`, `"thasup"`, `"vatsap"`, `"వాట్సాప్"` $\rightarrow$ `whatsapp`
+  - `"touch light"`, `"torch light"`, `"put torch"`, `"flaslight"` $\rightarrow$ `turn on flashlight`
+  - `"put message"`, `"keep message"`, `"drop message"` $\rightarrow$ `send message`
+- **Stage C (SOV-to-SVO Grammar Inversion)**: Indian languages follow Subject-Object-Verb order (*"Rahul ki call cheyi"*). The normalizer inverts this into standard SVO (*"call rahul"*).
+- **Stage D (Universal App Catalog)**: Built-in mappings for 50+ popular Indian applications (WhatsApp, PhonePe, Google Pay, Paytm, Swiggy, Zomato, Blinkit, Zepto, IRCTC, Rapido, JioCinema, YouTube, etc.).
+
+### 3. Voice-Driven Disambiguation & Cross-App Fallback
+Blind and elderly users cannot fix errors by tapping. Dhwani handles failures autonomously through voice:
+- **Nearest-Match Contact Disambiguation**: If the spoken contact (e.g., *"Rakesh"*) does not exist in memory or the phone's address book, Dhwani calculates the closest phonetic match (*"Rahul"*) and speaks aloud:
+  > *"Contact Rakesh was not found. The closest match is Rahul. Should I call Rahul instead?"*
+  The user simply replies *"Yes"* (*"అవును"* / *"हाँ"* / *"ஆமா"*) or *"No"*, and Dhwani proceeds accordingly.
+- **Cross-App Category Fallback**: If a user asks to open an app that is not installed (e.g., *"Open Blinkit"*), Dhwani scans the phone for installed alternatives in the same category (e.g., Zepto, Swiggy Instamart) and automatically opens the alternative while explaining what it did.
+
+### 4. Hardware Automation for Samsung One UI & AOSP
+Tested and validated on physical Android hardware (Samsung Galaxy A36):
+- **Flashlight Automation**: Overcomes Samsung One UI's restricted flashlight service by automating the hardware Quick Settings tile directly (`cmd statusbar expand-settings` $\rightarrow$ tap coordinate $\rightarrow$ collapse).
+- **Live Contact Synchronization**: Reads contacts directly from the device's native SQLite content provider via ADB (`content://com.android.contacts/data/phones`).
+- **System Telemetry**: Spoken battery level, charging status, and volume control via voice.
 
 ---
 
-## ⚡ Core Capabilities
-
-### 1. 4-Stage Multilingual & Phonetic Normalizer
-- **Native Unicode Script Support**: Bypasses regex `\b` word boundary limitations on combining vowel signs (matras) and viramas across Indic scripts.
-- **SOV-to-SVO Grammar Inversion**: Converts Indian language Subject-Object-Verb phrasing (`"nanna call"`, `"whatsapp open"`, `"torch turn on"`) into canonical imperative SVO commands (`"call nanna"`, `"open whatsapp"`, `"turn on torch"`).
-- **Phonetic App Auto-Correction**: Maps speech distortions (`"what's up"`, `"watsapp"`, `"thasup"` $\rightarrow$ `"whatsapp"`; `"crome"` $\rightarrow$ `"chrome"`; `"play star"` $\rightarrow$ `"play store"`).
-- **Bare App Launcher**: Instantly launches apps by name alone (`"whatsapp"`, `"settings"`, `"zepto"`).
-
-### 2. Interactive Disambiguation & Cross-App Fallback
-- **Missing Contact Disambiguation**: Queries the phone's live Android Contacts database (`content://com.android.contacts/data/phones`). If the exact name is missing, finds the nearest phonetic match and asks:
-  > *"I couldn't find Rakesh in your contacts. Did you mean Rahul? Please say Yes or No."*
-- **Uninstalled App Category Fallback**: If an app isn't installed, queries the live package manager and recommends an installed category alternative:
-  > *"Blinkit is not installed on your phone. Would you like me to open Zepto instead? Please say Yes or No."*
-- **Persistent Confirmation State**: Stores suggestions in `pending_confirmation.json`. Responding affirmatively (`"Yes"`, `"Haan"`, `"Avunu"`, `"Aama"`, `"Haudu"`) executes the pending action instantly.
-
-### 3. Sub-100ms Hardware & System Controls
-- **Samsung One UI Hardware Flashlight**: Toggles physical LED via Quick Settings panel coordinate automation (`cmd statusbar expand-settings` $\rightarrow$ `input tap 651 480` $\rightarrow$ `cmd statusbar collapse`), with state inspection via `dumpsys media.camera`.
-- **Battery Status & Audio Level**: Opens battery saver settings and announces current percentage aloud.
-- **Hardware Keys**: Instant sub-second Volume Up/Down, Mute, Take Screenshot, Home, Back, and Recent Apps.
-
-### 4. Universal 50+ App Catalog
-Pre-mapped with verified package names, launch activities, and fallback categories:
-- **Food & Grocery**: Blinkit, Zepto, Swiggy, Zomato, BigBasket.
-- **Payments & Banking**: GPay, PhonePe, Paytm, BHIM.
-- **Travel & Transit**: Uber, Ola, Rapido, Where Is My Train, IRCTC, RedBus.
-- **Shopping**: Amazon, Flipkart, Myntra, Meesho.
-- **Media & Social**: WhatsApp, YouTube, Instagram, Spotify, JioSaavn, JioCinema, Hotstar.
-
----
-
-## 🎨 Neo-Humanist Minimalist Web Console
-
-Dhwani features a web console running at **`http://localhost:5000`**:
-
-- **Pure-White Canvas (`#FFFFFF`)**: High-contrast, clean typography (Plus Jakarta Sans & JetBrains Mono) designed for elderly readability.
-- **Pan-Indian Language Pill Bar**: 1-click language toggling (`EN`, `TE`, `TA`, `KN`, `HI`, `MR`, `OR`).
-- **Tactile Push-to-Talk (PTT)**: Oversized pill switch with real-time RMS Voice Activity Equalizer and hotkey support (`Space` to talk, `Esc` to stop).
-- **Barge-In Emergency Stop `[Esc]`**: Instantly halts any running autonomous agent task or audio capture and returns the device to the Home screen.
-- **Interactive Disambiguation Banner**: Surfaces `[Yes, Proceed]` and `[No, Cancel]` buttons during ambiguities.
-- **Saved Contacts Vault**: Direct `[Call]` and `[WA]` buttons, `[+ Add]` VIP contact modal, `[✕]` instant delete, and `[↻ Sync]` to pull contacts from phone.
-- **Real-Time Telemetry Terminal**: Streams line-by-line ADB bus events, STT transcripts, and routing decisions.
-
----
-
-## 🚀 Quick Start
+## 🚀 Getting Started
 
 ### Prerequisites
-1. **Python 3.10+** (Virtual environment recommended)
-2. **Android Device or Emulator**:
-   - Enable **Developer Options** and **USB Debugging** on your phone.
-   - Connect via USB: verify with `adb devices`.
-3. **Gnani.ai API Key**: For Indian multilingual STT and TTS ([Gnani.ai](https://gnani.ai)).
-4. **OpenRouter / Gemini API Key**: For autonomous vision agent fallback ([OpenRouter](https://openrouter.ai)).
+1. **Python 3.10+**
+2. **Android Device or Emulator** (Android 10 to 15, Developer Options & USB Debugging enabled).
+3. **ADB (Android Debug Bridge)** installed and accessible on PATH.
+4. **Gnani.ai API Key**: Sign up at [Gnani.ai](https://gnani.ai) to obtain your STT and TTS API credentials.
 
 ### Installation
 
@@ -156,76 +176,97 @@ Dhwani features a web console running at **`http://localhost:5000`**:
 git clone https://github.com/GovindaSaiKiran/Dhwani.git
 cd Dhwani
 
-# 2. Create virtual environment
+# 2. Create and activate a virtual environment
 python -m venv .venv
-# Windows:
+# On Windows:
 .venv\Scripts\activate
-# Linux/macOS:
+# On Linux/macOS:
 source .venv/bin/activate
 
 # 3. Install dependencies
 pip install -r requirements.txt
-# Or using uv:
-uv pip install -e artemis
 ```
 
 ### Configuration
 
-Copy `.env.example` to `.env` and insert your credentials:
+Create a `.env` file in the root directory (or copy from `.env.example`):
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env`:
+Add your credentials to `.env`:
 ```env
-# API Keys
+# Gnani.ai API Credentials (Required for STT & TTS)
 GNANI_API_KEY=your_gnani_api_key_here
+
+# OpenRouter / Gemini API Key (For Autonomous Vision Agent Fallback)
 OPENROUTER_API_KEY=your_openrouter_api_key_here
 
-# Target Android Device
-TARGET_DEVICE_SERIAL=your_device_serial_here  # Run 'adb devices' to find
+# Target Android Device Serial (Run 'adb devices' to find)
+TARGET_DEVICE_SERIAL=your_device_serial_here
 ADB_HOST=127.0.0.1
 ADB_PORT=5037
 ```
 
-### Launching Dhwani
-
-#### Option A: Web Console (Recommended)
+Connect your Android phone via USB and verify ADB detection:
 ```bash
-python web_ui.py
-```
-Open **`http://localhost:5000`** in your browser.
-
-#### Option B: Command Line Interface (CLI)
-```bash
-# Live microphone mode (Default English)
-python voice_commander.py
-
-# Live microphone in Telugu
-python voice_commander.py --lang te-IN
-
-# Direct text simulation mode
-python voice_commander.py --simulate "నాన్న కి కాల్ చేయి" --lang te-IN
-python voice_commander.py --simulate "Open Zepto"
-python voice_commander.py --simulate "turn on flashlight"
+adb devices
 ```
 
 ---
 
-## 📁 Repository Structure
+## 🗣️ Operating Dhwani (Voice Controlled)
+
+Launch Dhwani's live voice pipeline with your preferred Indian language:
+
+```bash
+# Live Voice Mode in Telugu (తెలుగు)
+python voice_commander.py --lang te-IN
+
+# Live Voice Mode in Tamil (தமிழ்)
+python voice_commander.py --lang ta-IN
+
+# Live Voice Mode in Hindi (हिन्दी)
+python voice_commander.py --lang hi-IN
+
+# Live Voice Mode in Kannada (ಕನ್ನಡ)
+python voice_commander.py --lang kn-IN
+
+# Live Voice Mode in Marathi (मराठी)
+python voice_commander.py --lang mr-IN
+
+# Live Voice Mode in Odia (ଓଡ଼ିଆ)
+python voice_commander.py --lang or-IN
+
+# Live Voice Mode in Indian English (Default)
+python voice_commander.py --lang en-IN
+```
+
+### Spoken Voice Examples:
+- **Placing Phone Calls**: *"నాన్న కి కాల్ చేయి"* / *"Call Rahul"* / *"पापा को फोन लगाओ"*
+- **WhatsApp Messaging**: *"Send WhatsApp to Rahul saying I will be late"* / *"వాట్సాప్ లో అమ్మ కి మెసేజ్ చేయి"*
+- **Hardware Flashlight**: *"Torch on cheyi"* / *"Turn on flashlight"* / *"टॉर्च जलाओ"*
+- **Checking Battery**: *"Battery percentage entha?"* / *"What is my battery level?"*
+- **Adjusting Volume**: *"Volume penchu"* / *"Increase volume to 80%"*
+- **Launching Apps**: *"Open YouTube"* / *"యూట్యూబ్ తెరువు"* / *"Zepto kholo"*
+- **Searching Media**: *"Search Telugu devotional songs on YouTube"*
+- **Emergency Task Abort**: Spoken *"Stop"* / *"ఆపు"* / *"रुको"* immediately terminates any ongoing task and returns to the phone home screen.
+
+---
+
+## 📁 Project Architecture
 
 ```
 Dhwani/
-├── voice_commander.py     # Main Pan-Indian Voice OS orchestrator & intent engine
-├── web_ui.py              # Neo-Humanist Modern Design Web Console (Flask + Socket.IO)
-├── gnani_bridge.py        # Gnani.ai Prisma v3.0 STT & Timbre v3.0 TTS pipeline
-├── user_memory.json       # Persistent user memory & VIP contact vault
+├── voice_commander.py     # Core Pan-Indian Autonomous Voice OS Orchestrator
+├── gnani_bridge.py        # Gnani.ai Prisma STT & Timbre TTS Voice Pipeline
+├── user_memory.json       # Clean local user memory & VIP contact vault
 ├── verify_voice_os.py     # End-to-end hardware verification suite
-├── .env.example           # Example configuration template
-├── .gitignore             # Git exclusion rules
-├── requirements.txt       # Python dependencies
-└── artemis/               # Artemis autonomous multimodal agent framework
+├── requirements.txt       # Python dependencies (sounddevice, requests, etc.)
+├── .env.example           # Example environment variables template
+├── .gitignore             # Git ignore configuration
+└── artemis/               # Autonomous multimodal vision agent framework
     ├── artemis/           # Agent execution graphs, planners, and operators
     ├── config/            # System & LLM router configurations
     └── mcp_server/        # Model Context Protocol tools & ADB interfaces
@@ -233,33 +274,11 @@ Dhwani/
 
 ---
 
-## 🔌 API Endpoints
+## 🛡️ Privacy, Security & Ethics
 
-The Web Console exposes a clean REST & WebSocket API:
-
-| Endpoint | Method | Description |
-| :--- | :--- | :--- |
-| `GET /` | `GET` | Serves the Neo-Humanist Web Console |
-| `GET /api/memory` | `GET` | Fetches saved contacts and user profile |
-| `POST /api/contacts/add` | `POST` | Adds a new contact (`{"name": "...", "phone": "..."}`) |
-| `POST /api/contacts/delete` | `POST` | Deletes a contact (`{"name": "..."}`) |
-| `POST /api/contacts/sync` | `POST` | Pulls live contacts from Android device via ADB |
-| `POST /api/listen` | `POST` | Activates microphone recording with VAD (`?lang=te-IN`) |
-| `POST /api/simulate` | `POST` | Executes text prompt simulation (`?prompt=...&lang=...`) |
-| `POST /api/stop` | `POST` | Emergency abort: kills running tasks and returns phone to Home |
-
----
-
-## 🛡️ Privacy & Safety
-- **Local Contact Storage**: Contacts and memory are saved locally in `user_memory.json` on your machine.
-- **Credential Protection**: API keys are isolated in `.env` and never tracked or committed.
-- **Hardware Sandboxing**: All ADB interactions run strictly against the authorized target device serial.
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please check out [CONTRIBUTING.md](CONTRIBUTING.md) to add new Indian languages, app package mappings, or accessibility features.
+- **Zero Reading / Zero Touch**: Dhwani is built for digital inclusion, allowing individuals who cannot read or see to operate a smartphone with dignity.
+- **Local Contact Privacy**: Address books and user notes remain stored locally in `user_memory.json` on the device boundary.
+- **Auditory Transparency**: Dhwani strictly speaks before executing actions so visually impaired users remain in complete control of their device.
 
 ---
 
