@@ -1,0 +1,88 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Environment Variables & Secrets (CRITICAL)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.rsa
+
+# Android & ADB Local Data
+.android/
+*.apk
+*.apks
+.gradle/
+
+# Temporary Audio Recordings
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+*.aac
+
+# Temporary Test Screen Captures (Root & Artemis)
+current_screen.png
+play_search.png
+temple_run.png
+chrome_screenshot.png
+chrome_search_results.png
+current_chrome_state.png
+emulator_screen.png
+live_success_screen.png
+physical_device_settings.png
+settings_screenshot.png
+youtube_search_results.png
+
+# Logs & Temporary Files
+*.log
+web_ui.log
+web_ui_err.log
+.artemis_ipc_port
+.artemis_server.json
+.jetski_env
+.jetski_ls_address
+traces/
+scratch/
+pending_confirmation.json
+
+# Scratch and Patch Scripts
+patch_voice_commander.py
+test_norm.py
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
