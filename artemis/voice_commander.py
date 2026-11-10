@@ -71,17 +71,33 @@ from gnani_bridge import (
 # ==============================================================================
 # Configuration & Hardware Targeting
 # ==============================================================================
-TARGET_DEVICE_SERIAL = "RZGL52YX8DD"
-AUDIO_SAMPLE_RATE = 16000
-VOICE_COMMAND_FILE = "voice_command.wav"
-RESPONSE_AUDIO_FILE = "response.wav"
-
 ADB_BIN = (
     shutil.which("adb")
     or os.getenv("ADB_PATH")
     or r"C:\Users\Asus\Downloads\Android\platform-tools-latest-windows\platform-tools\adb.exe"
     or "adb"
 )
+
+def _detect_default_device() -> str:
+    env_target = os.getenv("TARGET_DEVICE_SERIAL")
+    if env_target:
+        return env_target
+    try:
+        res = subprocess.run([ADB_BIN, "devices"], capture_output=True, text=True, check=False, timeout=3)
+        devs = [l.split()[0] for l in res.stdout.splitlines()[1:] if len(l.split()) >= 2 and l.split()[1] == "device"]
+        emus = [d for d in devs if d.startswith("emulator")]
+        if emus:
+            return emus[0]
+        if devs:
+            return devs[0]
+    except Exception:
+        pass
+    return "emulator-5554"
+
+TARGET_DEVICE_SERIAL = _detect_default_device()
+AUDIO_SAMPLE_RATE = 16000
+VOICE_COMMAND_FILE = "voice_command.wav"
+RESPONSE_AUDIO_FILE = "response.wav"
 
 WORKSPACE_DIR = Path(__file__).resolve().parent
 PENDING_CONFIRMATION_FILE = WORKSPACE_DIR / "pending_confirmation.json"

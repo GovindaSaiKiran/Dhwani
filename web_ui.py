@@ -46,14 +46,55 @@ VENV_PYTHON = WORKSPACE_DIR / "artemis" / ".venv" / "Scripts" / "python.exe"
 PYTHON_BIN = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
 VOICE_COMMANDER_SCRIPT = WORKSPACE_DIR / "voice_commander.py"
 MEMORY_FILE = WORKSPACE_DIR / "user_memory.json"
-TARGET_DEVICE_SERIAL = "RZGL52YX8DD"
-
 ADB_BIN = (
     shutil.which("adb")
     or os.getenv("ADB_PATH")
     or r"C:\Users\Asus\Downloads\Android\platform-tools-latest-windows\platform-tools\adb.exe"
     or "adb"
 )
+
+def get_connected_devices() -> list:
+    """Discover all connected ADB devices and emulators."""
+    devices = []
+    try:
+        env = os.environ.copy()
+        env["ANDROID_USER_HOME"] = str(WORKSPACE_DIR / ".android")
+        res = subprocess.run([ADB_BIN, "devices", "-l"], capture_output=True, text=True, check=False, env=env, timeout=3)
+        for line in res.stdout.splitlines()[1:]:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] == "device":
+                serial = parts[0]
+                model = "Android Device"
+                for p in parts[2:]:
+                    if p.startswith("model:"):
+                        model = p.split(":", 1)[1].replace("_", " ")
+                is_emu = serial.startswith("emulator-")
+                devices.append({
+                    "serial": serial,
+                    "model": model,
+                    "is_emulator": is_emu,
+                    "label": f"{'🖥️ Emulator' if is_emu else '📱 Device'} ({serial} • {model})"
+                })
+    except Exception:
+        pass
+    return devices
+
+def get_default_device() -> str:
+    env_target = os.getenv("TARGET_DEVICE_SERIAL")
+    if env_target:
+        return env_target
+    devs = get_connected_devices()
+    for d in devs:
+        if d.get("is_emulator"):
+            return d["serial"]
+    if devs:
+        return devs[0]["serial"]
+    return "emulator-5554"
+
+TARGET_DEVICE_SERIAL = get_default_device()
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "artemis-neo-humanist-design-console-2026"
@@ -108,7 +149,10 @@ def run_voice_commander_streaming(cmd_args: list, mode_name: str = "LIVE"):
         env["PYTHONIOENCODING"] = "utf-8"
         env["ANDROID_USER_HOME"] = str(WORKSPACE_DIR / ".android")
 
-        full_cmd = [PYTHON_BIN, "-u", str(VOICE_COMMANDER_SCRIPT)] + cmd_args
+        actual_args = list(cmd_args)
+        if "--device" not in actual_args and "-d" not in actual_args:
+            actual_args = ["--device", TARGET_DEVICE_SERIAL] + actual_args
+        full_cmd = [PYTHON_BIN, "-u", str(VOICE_COMMANDER_SCRIPT)] + actual_args
 
         try:
             current_process = subprocess.Popen(
@@ -1153,11 +1197,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <!-- TOP BAR -->
     <header class="top-header">
       <div class="brand-mark">
-        <div class="brand-logo-disc">✨</div>
-        <span>Artemis</span>
-        <div class="device-badge">
+        <div class="brand-logo-disc">🎙️</div>
+        <span>Dhwani</span>
+        <div class="device-badge" style="padding: 2px 10px;">
           <div class="pulse-dot"></div>
-          <span>Galaxy A36 • RZGL52YX8DD</span>
+          <select id="deviceSelector" style="background: transparent; border: none; font-size: 11px; font-weight: 700; color: #1E293B; cursor: pointer; outline: none;">
+            <option value="emulator-5554">🖥️ Emulator (emulator-5554)</option>
+            <option value="RZGL52YX8DD">📱 Physical Phone</option>
+          </select>
         </div>
       </div>
 
@@ -1561,10 +1608,47 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       if (btnStopTask) btnStopTask.classList.remove('active');
     }
 
+    // Device Selection Discovery & Switcher
+    const deviceSelector = document.getElementById('deviceSelector');
+    function loadDevices() {
+      fetch('/api/devices')
+        .then(r => r.json())
+        .then(data => {
+          if (!data || !data.devices || !deviceSelector) return;
+          deviceSelector.innerHTML = '';
+          data.devices.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.serial;
+            opt.textContent = d.label;
+            if (d.serial === data.active) opt.selected = true;
+            deviceSelector.appendChild(opt);
+          });
+        })
+        .catch(console.error);
+    }
+    loadDevices();
+
+    if (deviceSelector) {
+      deviceSelector.addEventListener('change', (e) => {
+        const chosen = e.target.value;
+        fetch('/api/device/set', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device: chosen })
+        })
+        .then(r => r.json())
+        .then(res => {
+          appendLog('SYS', `Target device changed to: ${chosen}`);
+        })
+        .catch(err => appendLog('ERROR', 'Failed to switch device: ' + err));
+      });
+    }
+
     // Socket.IO Real-Time Stream Listeners
     fetch('/api/memory').then(r => r.json()).then(renderContacts).catch(console.error);
     socket.on('connect', () => {
       appendLog('SYS', 'Telemetry stream connected to server.');
+      loadDevices();
       fetch('/api/memory').then(r => r.json()).then(renderContacts);
     });
 
@@ -1915,6 +1999,32 @@ def api_stop():
     })
     socketio.emit("tx_complete", {"stopped_by_user": True})
     return jsonify({"status": "stopped", "process_killed": stopped})
+
+
+@app.route("/api/devices", methods=["GET"])
+def api_get_devices():
+    """Returns all attached Android devices/emulators and active selection."""
+    return jsonify({
+        "devices": get_connected_devices(),
+        "active": TARGET_DEVICE_SERIAL
+    })
+
+
+@app.route("/api/device/set", methods=["POST"])
+def api_set_device():
+    """Sets active target device serial."""
+    global TARGET_DEVICE_SERIAL
+    payload = request.get_json(silent=True) or {}
+    device = payload.get("device")
+    if device:
+        TARGET_DEVICE_SERIAL = device
+        socketio.emit("log_event", {
+            "type": "SYS",
+            "line": f"Target hardware switched to: {TARGET_DEVICE_SERIAL}",
+            "timestamp": time.strftime("%H:%M:%S")
+        })
+        return jsonify({"status": "ok", "active": TARGET_DEVICE_SERIAL})
+    return jsonify({"status": "error", "message": "Device serial required"}), 400
 
 
 # ==============================================================================
