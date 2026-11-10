@@ -1563,7 +1563,16 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     // Trigger Prompt Simulation
     function executePrompt(promptText) {
-      if (!promptText || isTransmitting) return;
+      if (!promptText) return;
+      const lower = promptText.trim().toLowerCase();
+
+      // Intercept STOP commands immediately!
+      if (/^(stop|cancel|abort|halt|pause|ఆపు|ఆపండి|రుకో|రోకో|நிறுத்து|नಿಲ್ಲಿಸು|थांबवा|exit|never\s*mind)$/i.test(lower)) {
+        stopTask();
+        return;
+      }
+
+      if (isTransmitting) return;
       isTransmitting = true;
 
       pillTransmitter.classList.add('transmitting');
@@ -1584,8 +1593,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     // Stop / Abort Task
     function stopTask() {
-      if (!isTransmitting) return;
-      appendLog('SYS', '⏹ Stopping task / audio capture on user request...');
+      appendLog('SYS', '⏹ Stopping task and resetting pipeline...');
+      resetTransmitter();
+      routeBadge.className = 'route-candy-tag';
+      routeBadge.textContent = '● Standby';
+
       fetch('/api/stop', { method: 'POST' })
         .then(r => r.json())
         .then(data => {
@@ -1723,12 +1735,14 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     // Hotkey: Spacebar to Transmit / Escape to Stop
     window.addEventListener('keydown', (e) => {
-      if (e.target.tagName === 'INPUT') return;
-
-      if (e.code === 'Escape' && isTransmitting) {
+      if (e.code === 'Escape') {
         e.preventDefault();
         stopTask();
-      } else if (e.code === 'Space') {
+        return;
+      }
+      if (e.target.tagName === 'INPUT') return;
+
+      if (e.code === 'Space') {
         e.preventDefault();
         if (isTransmitting) {
           stopTask();
@@ -1945,6 +1959,10 @@ def api_simulate():
 
     prompt = prompt.strip()
 
+    # Intercept STOP / CANCEL commands immediately even if pipeline is active!
+    if re.search(r"^(?:stop|cancel|abort|halt|pause|never\s*mind|exit|ruk|roko|bas|ఆపు|ఆపండి|రుకో|நிறுத்து|नಿಲ್ಲಿಸು|थांबवा)$", prompt, re.IGNORECASE):
+        return api_stop()
+
     if execution_lock.locked():
         return jsonify({"status": "busy", "message": "Pipeline already active"}), 429
 
@@ -1957,17 +1975,17 @@ def api_simulate():
     return jsonify({"status": "initiated", "prompt": prompt, "lang": lang})
 
 
-@app.route("/api/stop", methods=["POST"])
+@app.route("/api/stop", methods=["GET", "POST"])
 def api_stop():
     """Cancel and terminate any currently running audio recording or Artemis task immediately."""
     global current_process
     stopped = False
 
-    # 1. Halt Artemis Daemon scheduler tasks immediately
+    # 1. Halt Artemis Daemon scheduler tasks immediately on port 8000
     try:
-        requests.post("http://127.0.0.1:8000/api/stop", json={"all": True}, timeout=1.0)
+        requests.post("http://127.0.0.1:8000/api/stop", json={"all": True, "device_id": TARGET_DEVICE_SERIAL}, timeout=1.0)
     except Exception as e:
-        print(f"[STOP] Artemis daemon stop error: {e}")
+        pass
 
     # 2. Terminate the subprocess tree on Windows
     if current_process:
@@ -1978,17 +1996,36 @@ def api_stop():
                     current_process.stdout.close()
             except Exception:
                 pass
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, check=False)
             stopped = True
         except Exception as e:
             print(f"[STOP] Exception terminating subprocess tree: {e}")
         finally:
             current_process = None
 
-    # 3. Dismiss active screen / dialog on phone and return to Home
+    # 3. Kill any detached Artemis runners or child python CLI processes
     try:
-        subprocess.run([ADB_BIN, "-s", TARGET_DEVICE_SERIAL, "shell", "input", "keyevent", "4"], timeout=2)
-        subprocess.run([ADB_BIN, "-s", TARGET_DEVICE_SERIAL, "shell", "input", "keyevent", "3"], timeout=2)
+        subprocess.run(
+            'powershell -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like \'*artemis run*\' -or $_.CommandLine -like \'*voice_commander.py*\' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"',
+            shell=True,
+            capture_output=True,
+            check=False,
+            timeout=3
+        )
+    except Exception:
+        pass
+
+    # 4. Dismiss active screen / dialog on phone and return to Home
+    try:
+        subprocess.run([ADB_BIN, "-s", TARGET_DEVICE_SERIAL, "shell", "input", "keyevent", "4"], timeout=2, capture_output=True)
+        subprocess.run([ADB_BIN, "-s", TARGET_DEVICE_SERIAL, "shell", "input", "keyevent", "3"], timeout=2, capture_output=True)
+    except Exception:
+        pass
+
+    # 5. Ensure execution lock is unlocked
+    try:
+        if execution_lock.locked():
+            execution_lock.release()
     except Exception:
         pass
 

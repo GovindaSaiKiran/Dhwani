@@ -31,11 +31,31 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import threading
 import time
 import urllib.parse
+
+# Process tracking for clean aborts
+active_artemis_proc = None
+
+def _handle_exit_signal(signum, frame):
+    global active_artemis_proc
+    if active_artemis_proc:
+        try:
+            active_artemis_proc.terminate()
+            active_artemis_proc.kill()
+        except Exception:
+            pass
+    sys.exit(0)
+
+try:
+    signal.signal(signal.SIGINT, _handle_exit_signal)
+    signal.signal(signal.SIGTERM, _handle_exit_signal)
+except Exception:
+    pass
 
 import numpy as np
 import requests
@@ -650,8 +670,9 @@ INDIC_ACTION_DICTIONARY = [
     (r"(?:తెరువు|ఓపెన్|\bteruvu\b|\bopen\s*cheyi\b|\bopen\s*cheyyi\b)", "open"),
     (r"(?:కాల్\s*చేయి|ఫోన్\s*చేయి|కాల్\s*చెయ్యి|ఫోన్\s*చెయ్యి|\bcall\s*cheyi\b|\bcall\s*cheyyi\b|\bphone\s*cheyi\b)", "call"),
     (r"(?:మెసేజ్\s*పెట్టు|మెసేజ్\s*పంపు|మెసేజ్\s*చెయ్యి|\bmessage\s*pettu\b|\bmessage\s*pampu\b|\bpampu\b)", "send message"),
+    (r"(?:ఆపు\s*చేయి|ఆపండి|ఆపు|\bstop\s*cheyi\b|\baapu\b|\baapandi\b)", "stop"),
     (r"(?:ఆన్\s*చేయి|వెలిగించు|ఆన్\s*చెయ్యి|\bon\s*cheyi\b)", "turn on"),
-    (r"(?:ఆఫ్\s*చేయి|ఆపు|ఆఫ్\s*చెయ్యి|\boff\s*cheyi\b)", "turn off"),
+    (r"(?:ఆఫ్\s*చేయి|ఆఫ్\s*చెయ్యి|\boff\s*cheyi\b)", "turn off"),
     (r"(?:టార్చ్|లైట్|ఫ్లాష్‌లైట్)", "flashlight"),
     (r"(?:నాన్న\s*కి|నాన్నకి|నాన్న|పాపా)", "nanna"),
     (r"(?:అమ్మ\s*కి|అమ్మకి|అమ్మ)", "amma"),
@@ -686,6 +707,7 @@ INDIC_ACTION_DICTIONARY = [
     (r"(?:खोलो|चालू\s*करो|\bkholo\b|\bopen\s*karo\b)", "open"),
     (r"(?:कॉल\s*करो|फोन\s*लगाओ|कॉल\s*लगाओ|\bcall\s*karo\b|\bphone\s*lagao\b)", "call"),
     (r"(?:मैसेज\s*भेजो|\bmessage\s*bhejo\b)", "send message"),
+    (r"(?:रुको|रोको|रोक\s*दो|रुक\s*जाओ|\broko\b|\bruko\b|\bstop\s*karo\b)", "stop"),
     (r"(?:ऑन\s*करो|जलाओ|\bon\s*karo\b)", "turn on"),
     (r"(?:बंद\s*करो|\boff\s*karo\b|\bband\s*karo\b)", "turn off"),
     (r"(?:हाँ|\bhaan\b|\bha\b|\bsahi\b)", "yes"),
@@ -1153,8 +1175,10 @@ def dispatch_artemis_fallback(
     ]
     print(f"[Artemis] Executing in {artemis_dir}: {' '.join(artemis_cmd)}")
 
+    global active_artemis_proc
     try:
         proc = subprocess.Popen(artemis_cmd, cwd=str(artemis_dir))
+        active_artemis_proc = proc
         proc.wait()
         finish_msg = "Task completed successfully." if proc.returncode == 0 else "Task finished."
         gnani_synth_play(finish_msg, lang=lang_code, play_audio=True)
@@ -1163,6 +1187,8 @@ def dispatch_artemis_fallback(
         err_msg = f"Task could not be dispatched: {e}"
         gnani_synth_play(err_msg, lang=lang_code, play_audio=True)
         return err_msg
+    finally:
+        active_artemis_proc = None
 
 
 # ==============================================================================
@@ -1239,7 +1265,10 @@ def execute_on_device(
     print(f"======================================================================")
 
     # 3. Emergency Abort / Stop Intent
-    if re.search(r"\b(?:stop|cancel|abort|halt|pause|never\s*mind|exit|ruk|roko|bas)\b", clean, re.IGNORECASE):
+    if (
+        re.search(r"\b(?:stop|cancel|abort|halt|pause|never\s*mind|exit|ruk|roko|bas|aapu|aapandi)\b", clean, re.IGNORECASE)
+        or clean.lower().strip() in ["stop", "cancel", "abort", "halt", "pause", "ఆపు", "ఆపండి", "రుకో", "रोको", "थांबवा", "நிறுத்து", "ನಿಲ್ಲಿಸು", "exit"]
+    ):
         print(f"[Router:Emergency] 🛑 Stop requested: returning to home screen.")
         try:
             requests.post("http://127.0.0.1:8000/api/stop", json={"all": True}, timeout=1.0)
