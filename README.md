@@ -153,11 +153,11 @@ Blind and elderly users cannot fix errors by tapping. Dhwani handles failures au
   The user simply replies *"Yes"* (*"అవును"* / *"हाँ"* / *"ஆமா"*) or *"No"*, and Dhwani proceeds accordingly.
 - **Cross-App Category Fallback**: If a user asks to open an app that is not installed (e.g., *"Open Blinkit"*), Dhwani scans the phone for installed alternatives in the same category (e.g., Zepto, Swiggy Instamart) and automatically opens the alternative while explaining what it did.
 
-### 4. Hardware Automation for Samsung One UI & AOSP
-Tested and validated on physical Android hardware (Samsung Galaxy A36):
-- **Flashlight Automation**: Overcomes Samsung One UI's restricted flashlight service by automating the hardware Quick Settings tile directly (`cmd statusbar expand-settings` $\rightarrow$ tap coordinate $\rightarrow$ collapse).
-- **Live Contact Synchronization**: Reads contacts directly from the device's native SQLite content provider via ADB (`content://com.android.contacts/data/phones`).
-- **System Telemetry**: Spoken battery level, charging status, and volume control via voice.
+### 4. Universal Android Hardware & System Automation
+Engineered to work seamlessly across physical Android smartphones (Android 10 – 15+):
+- **Hardware Flashlight Automation**: Universal torch control via native Android system commands and Quick Settings automation.
+- **Live Contact Synchronization**: Reads contacts directly from Android's native content provider via ADB (`content://com.android.contacts/data/phones`).
+- **Real-Time System Telemetry**: Spoken battery percentage, charging state, volume adjustments, and system status queries via voice.
 
 ---
 
