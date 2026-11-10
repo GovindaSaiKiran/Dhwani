@@ -1206,7 +1206,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <div class="confirm-icon">🔔</div>
           <div class="confirm-text-wrap">
             <div class="confirm-title">Confirmation Required</div>
-            <div id="confirmQuestion" class="confirm-question">Did you mean Rahul?</div>
+            <div id="confirmQuestion" class="confirm-question">Please confirm your action...</div>
           </div>
         </div>
         <div class="confirm-actions">
@@ -1562,6 +1562,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
 
     // Socket.IO Real-Time Stream Listeners
+    fetch('/api/memory').then(r => r.json()).then(renderContacts).catch(console.error);
     socket.on('connect', () => {
       appendLog('SYS', 'Telemetry stream connected to server.');
       fetch('/api/memory').then(r => r.json()).then(renderContacts);
@@ -1686,9 +1687,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     const btnAddContact = document.getElementById('btnAddContact');
     if (btnAddContact) {
       btnAddContact.addEventListener('click', () => {
-        const name = prompt('Enter contact name (e.g. Rahul, Nanna, Swaroop):');
+        const name = prompt('Enter contact name:');
         if (!name || !name.trim()) return;
-        const phone = prompt(`Enter phone number for "${name.trim()}" (e.g. +919876543210):`);
+        const phone = prompt(`Enter phone number for "${name.trim()}":`);
         if (!phone || !phone.trim()) return;
 
         fetch('/api/contacts/add', {
