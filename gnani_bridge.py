@@ -138,6 +138,20 @@ def resolve_language(lang_input: str | None) -> str:
     return LANGUAGE_ALIASES.get(cleaned, LANGUAGE_ALIASES.get(cleaned.replace("_", "-"), "en-IN"))
 
 
+LAST_STT_LATENCY_MS: float = 0.0
+LAST_TTS_LATENCY_MS: float = 0.0
+
+
+def get_last_stt_latency_ms() -> float:
+    """Returns roundtrip latency in milliseconds for the most recent STT operation."""
+    return LAST_STT_LATENCY_MS
+
+
+def get_last_tts_latency_ms() -> float:
+    """Returns roundtrip latency in milliseconds for the most recent TTS operation."""
+    return LAST_TTS_LATENCY_MS
+
+
 # ==============================================================================
 # Speech-to-Text (STT) via Gnani Prisma v3.0
 # ==============================================================================
@@ -156,6 +170,7 @@ def transcribe_audio(audio_path: str, lang: str = "en-IN") -> str:
         "X-User-Key-ID": KEY_ID_HEADER,
     }
 
+    t_start = time.perf_counter()
     try:
         with open(audio_path, "rb") as f:
             files = {"audio_file": (Path(audio_path).name, f, "audio/wav")}
@@ -172,14 +187,17 @@ def transcribe_audio(audio_path: str, lang: str = "en-IN") -> str:
                 files = {"audio_file": (Path(audio_path).name, f, "audio/wav")}
                 resp = requests.post(STT_ENDPOINT, headers=headers, files=files, data=data, timeout=20)
 
+        t_roundtrip = (time.perf_counter() - t_start) * 1000.0
+        global LAST_STT_LATENCY_MS
+        LAST_STT_LATENCY_MS = t_roundtrip
+
         if resp.status_code != 200:
             print(f"[STT] ❌ HTTP {resp.status_code} Error: {resp.text}")
             return ""
 
         result = resp.json()
         transcript = result.get("transcript", "").strip()
-        latency = result.get("end_to_end_latency", result.get("processing_time", 0))
-        print(f"[STT] ✔ HTTP 200 OK | Transcribed ({stt_lang_code}): \"{transcript}\" (Latency: {latency:.3f}s)")
+        print(f"[STT] ✔ HTTP 200 OK | Transcribed ({stt_lang_code}): \"{transcript}\" (RoundTrip: {t_roundtrip:.0f}ms)")
         return transcript
 
     except Exception as exc:
@@ -222,6 +240,7 @@ def synthesize_speech(
         },
     }
 
+    t_start = time.perf_counter()
     try:
         resp = requests.post(TTS_ENDPOINT, json=payload, headers=headers, timeout=15)
 
@@ -240,10 +259,14 @@ def synthesize_speech(
             payload["voice"] = "Lakshmi"
             resp = requests.post(TTS_ENDPOINT, json=payload, headers=headers, timeout=15)
 
+        t_roundtrip = (time.perf_counter() - t_start) * 1000.0
+        global LAST_TTS_LATENCY_MS
+        LAST_TTS_LATENCY_MS = t_roundtrip
+
         if resp.status_code == 200 and resp.content:
             with open(output_path, "wb") as f:
                 f.write(resp.content)
-            print(f"[TTS] ✔ HTTP 200 OK | Audio saved to '{output_path}' ({len(resp.content)} bytes)")
+            print(f"[TTS] ✔ HTTP 200 OK | Audio saved to '{output_path}' ({len(resp.content)} bytes, RoundTrip: {t_roundtrip:.0f}ms)")
             return output_path
         else:
             print(f"[TTS] ❌ HTTP {resp.status_code} Error: {resp.text}")

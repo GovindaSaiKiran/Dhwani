@@ -34,16 +34,22 @@ import sys
 import threading
 import time
 
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, jsonify, render_template_string, request, send_file
 from flask_socketio import SocketIO, emit
 import requests
+
+from gnani_bridge import (
+    PAN_INDIAN_LANGUAGES,
+    play_audio_file,
+    resolve_language,
+    synthesize_speech,
+)
 
 # ==============================================================================
 # Configuration & Paths
 # ==============================================================================
 WORKSPACE_DIR = Path(r"C:\Users\Asus\Downloads\Artemis").resolve()
-VENV_PYTHON = WORKSPACE_DIR / "artemis" / ".venv" / "Scripts" / "python.exe"
-PYTHON_BIN = str(VENV_PYTHON) if VENV_PYTHON.exists() else sys.executable
+PYTHON_BIN = sys.executable
 VOICE_COMMANDER_SCRIPT = WORKSPACE_DIR / "voice_commander.py"
 MEMORY_FILE = WORKSPACE_DIR / "user_memory.json"
 ADB_BIN = (
@@ -148,6 +154,19 @@ def run_voice_commander_streaming(cmd_args: list, mode_name: str = "LIVE"):
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
         env["ANDROID_USER_HOME"] = str(WORKSPACE_DIR / ".android")
+        env["ARTEMIS_STANDALONE"] = "1"
+        if "--voice" in cmd_args:
+            v_idx = cmd_args.index("--voice")
+            if v_idx + 1 < len(cmd_args):
+                env["ACTIVE_VOICE"] = cmd_args[v_idx + 1]
+        artemis_dir = WORKSPACE_DIR / "artemis"
+        venv_site = str(artemis_dir / ".venv" / "Lib" / "site-packages")
+        client_src = str(artemis_dir / "packages" / "artemis-client" / "src")
+        extra_paths = [str(WORKSPACE_DIR), str(artemis_dir), venv_site, client_src]
+        existing_pp = env.get("PYTHONPATH", "")
+        if existing_pp:
+            extra_paths.append(existing_pp)
+        env["PYTHONPATH"] = os.pathsep.join(extra_paths)
 
         actual_args = list(cmd_args)
         if "--device" not in actual_args and "-d" not in actual_args:
@@ -178,14 +197,30 @@ def run_voice_commander_streaming(cmd_args: list, mode_name: str = "LIVE"):
                 ts = time.strftime("%H:%M:%S")
                 log_type = "STREAM"
 
-                # 1. Interactive Disambiguation / User Confirmation Check
-                if "[Ask-User]" in line:
+                # 0. Wake-Word Detection & Filtered Ambient Speech
+                if "[WakeWord]" in line:
+                    if "Trigger detected" in line or "Trigger + Command" in line or "Command received during active window" in line:
+                        log_type = "WAKE"
+                        socketio.emit("wake_activated", {"line": line})
+                    elif "Ambient conversation filtered" in line:
+                        log_type = "FILTER"
+                        socketio.emit("wake_filtered", {"line": line})
+                    else:
+                        log_type = "WAKE"
+
+                # 1. Emergency Stop Intent
+                elif "[Router:Emergency]" in line:
+                    log_type = "SYS"
+                    socketio.emit("task_stopped", {"line": line})
+
+                # 2. Interactive Disambiguation / User Confirmation Check
+                elif "[Ask-User]" in line:
                     log_type = "CONFIRM"
                     q_match = re.search(r"\[Ask-User\]\s*(.+)", line)
                     question = q_match.group(1).strip() if q_match else line
                     socketio.emit("ask_user_confirmation", {"question": question})
 
-                # 2. STT Speech Decoded
+                # 3. STT Speech Decoded
                 elif "Transcribed:" in line or "Transcribed (" in line:
                     log_type = "STT"
                     match = re.search(r'Transcribed(?:\s*\([^\)]*\))?:\s*["\']?([^"\']+)["\']?', line)
@@ -199,7 +234,7 @@ def run_voice_commander_streaming(cmd_args: list, mode_name: str = "LIVE"):
                     log_type = "STT"
                     socketio.emit("recording_finished", {})
 
-                # 3. Fast-Path ADB Action
+                # 4. Fast-Path ADB Action
                 elif "Fast-Path" in line or "⚡" in line or "Instant" in line or "[Fast-Path]" in line or "[Router:Fast]" in line or "[Router:Call]" in line or "[Router:WhatsApp]" in line:
                     log_type = "FAST"
                     socketio.emit("routing_state", {
@@ -209,7 +244,7 @@ def run_voice_commander_streaming(cmd_args: list, mode_name: str = "LIVE"):
                         "badge": "FAST ADB"
                     })
 
-                # 4. Artemis Vision Fallback
+                # 5. Artemis Vision Fallback
                 elif "Artemis" in line or "Autonomous" in line or "Dispatching" in line or "Flash Turn" in line:
                     log_type = "ARTEMIS"
                     socketio.emit("routing_state", {
@@ -219,7 +254,7 @@ def run_voice_commander_streaming(cmd_args: list, mode_name: str = "LIVE"):
                         "badge": "VISION AGENT"
                     })
 
-                # 5. TTS Feedback
+                # 6. TTS Feedback
                 elif "Synthesizing:" in line or "Synthesizing (" in line or "[TTS]" in line:
                     log_type = "TTS"
                     match = re.search(r'Synthesizing(?:\s*\([^\)]*\))?:\s*["\']?([^"\']+)["\']?', line)
@@ -227,11 +262,25 @@ def run_voice_commander_streaming(cmd_args: list, mode_name: str = "LIVE"):
                         tts_text = match.group(1).strip()
                         socketio.emit("tts_event", {"text": tts_text})
 
-                # 6. Memory updates
+                # 7. Memory updates
                 elif "[Memory]" in line:
                     log_type = "MEMORY"
                     updated_mem = load_memory_vault()
                     socketio.emit("memory_updated", updated_mem)
+
+                # 8. Real-time Telemetry & Latency Breakdown
+                elif "[Telemetry]" in line and "TIMING BREAKDOWN:" in line:
+                    log_type = "STREAM"
+                    match = re.search(r"VAD=([\d\.]+)s\s*\|\s*STT=([\d\.]+)ms\s*\|\s*Router=([\d\.]+)ms\s*\|\s*Exec=([\d\.]+)ms\s*\|\s*TTS=([\d\.]+)ms\s*\|\s*Total=([\d\.]+)ms", line)
+                    if match:
+                        socketio.emit("telemetry_timing", {
+                            "vad": f"{match.group(1)}s",
+                            "stt": f"{match.group(2)}ms",
+                            "router": f"{match.group(3)}ms",
+                            "exec": f"{match.group(4)}ms",
+                            "tts": f"{match.group(5)}ms",
+                            "total": f"{match.group(6)}ms",
+                        })
 
                 # Mirror to server terminal
                 print(f"[{ts}] [{log_type}] {line}", flush=True)
@@ -438,9 +487,15 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .status-pill.green { background: #DCFCE7; color: #15803D; border: 1px solid #86EFAC; }
 
     /* ==========================================================================
-       LANGUAGE SELECTOR BAR (PAN-INDIAN)
+       PAN-INDIAN LANGUAGE & TIMBRE VOICE SELECTORS
        ========================================================================== */
-    .lang-bar {
+    .selectors-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .lang-bar, .voice-bar {
       display: flex;
       align-items: center;
       gap: 8px;
@@ -453,7 +508,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       box-shadow: var(--shadow-sm);
     }
 
-    .lang-label {
+    .lang-label, .voice-label {
       font-size: 11px;
       font-weight: 800;
       text-transform: uppercase;
@@ -462,7 +517,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       margin-right: 4px;
     }
 
-    .lang-pill {
+    .lang-pill, .voice-pill {
       padding: 5px 12px;
       border-radius: 9999px;
       font-size: 12px;
@@ -471,19 +526,74 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       background: transparent;
       border: 1px solid transparent;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       transition: all 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
     }
-    .lang-pill:hover {
+
+    .lang-pill:hover, .voice-pill:hover {
       color: var(--ink-primary);
       background: #FFFFFF;
       border-color: var(--border-strong);
       transform: translateY(-1px);
     }
+
     .lang-pill.active {
       color: #FFFFFF;
       background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
       border-color: transparent;
       box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+    }
+
+    .voice-pill.active {
+      color: #FFFFFF;
+      background: linear-gradient(135deg, #10B981 0%, #059669 100%);
+      border-color: transparent;
+      box-shadow: 0 2px 8px rgba(16, 185, 129, 0.35);
+    }
+
+    .voice-sub {
+      font-size: 10px;
+      font-weight: 700;
+      opacity: 0.85;
+      background: rgba(0, 0, 0, 0.06);
+      padding: 1px 6px;
+      border-radius: 9999px;
+    }
+
+    .voice-pill.active .voice-sub {
+      background: rgba(255, 255, 255, 0.25);
+      color: #FFFFFF;
+    }
+
+    .voice-ack-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--ink-secondary);
+      background: #F1F5F9;
+      border: 1px solid var(--border-light);
+      margin-left: 6px;
+    }
+
+    .pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #10B981;
+      display: inline-block;
+      box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+      animation: pulseAnim 1.8s infinite;
+    }
+
+    @keyframes pulseAnim {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.85); }
     }
 
     /* ==========================================================================
@@ -596,6 +706,67 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .transcript-content.placeholder {
       color: #94A3B8;
       font-weight: 500;
+    }
+
+    /* ==========================================================================
+       LATENCY TELEMETRY CANDY STRIP
+       ========================================================================== */
+    .latency-strip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+      padding: 6px 12px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
+      width: fit-content;
+      box-shadow: var(--shadow-sm);
+      transition: border-color 0.3s ease;
+    }
+
+    .latency-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
+      border-radius: 9999px;
+      background: #FFFFFF;
+      border: 1px solid var(--border-strong);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--ink-secondary);
+      transition: all 0.2s ease;
+    }
+
+    .latency-chip .chip-label {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--ink-tertiary);
+    }
+
+    .latency-chip .chip-val {
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      font-size: 11px;
+      color: var(--ink-primary);
+    }
+
+    .latency-chip.vad .chip-val { color: #0284C7; }
+    .latency-chip.stt .chip-val { color: #2563EB; }
+    .latency-chip.router .chip-val { color: #7C3AED; }
+    .latency-chip.exec .chip-val { color: #16A34A; }
+    .latency-chip.tts .chip-val { color: #D97706; }
+    .latency-chip.total {
+      background: #EFF6FF;
+      border-color: #BFDBFE;
+    }
+    .latency-chip.total .chip-val {
+      color: #1D4ED8;
+      font-weight: 800;
     }
 
     /* ==========================================================================
@@ -801,6 +972,43 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     }
     .stop-icon {
       font-size: 13px;
+    }
+
+    /* Always-On Vinda Mode Toggle */
+    .btn-always-listen {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #F8FAFC;
+      border: 1px solid #E2E8F0;
+      border-radius: 9999px;
+      padding: 10px 18px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #475569;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      user-select: none;
+    }
+    .btn-always-listen:hover {
+      background: #F1F5F9;
+      color: #0F172A;
+      transform: translateY(-1px);
+    }
+    .btn-always-listen.active {
+      background: #ECFDF5;
+      color: #059669;
+      border-color: #10B981;
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2), 0 2px 10px rgba(16, 185, 129, 0.25);
+      animation: pulse-always-on 2s infinite ease-in-out;
+    }
+    @keyframes pulse-always-on {
+      0%, 100% { box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2), 0 2px 10px rgba(16, 185, 129, 0.25); }
+      50% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.1), 0 4px 14px rgba(16, 185, 129, 0.35); }
+    }
+    .vinda-icon {
+      font-size: 14px;
     }
 
     @keyframes stop-pop {
@@ -1181,6 +1389,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     .log-badge.TTS     { background: #F3E8FF; color: #7E22CE; }
     .log-badge.SYS     { background: #F1F5F9; color: #475569; }
     .log-badge.CONFIRM { background: #FEF3C7; color: #D97706; font-weight: 800; }
+    .log-badge.WAKE    { background: #CCFBF1; color: #0F766E; font-weight: 800; }
+    .log-badge.FILTER  { background: #F1F5F9; color: #94A3B8; font-weight: 600; }
     .log-badge.ERROR   { background: #FEE2E2; color: #DC2626; font-weight: 800; }
     .log-badge.STREAM  { background: #F1F5F9; color: #64748B; }
 
@@ -1215,16 +1425,38 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       </div>
     </header>
 
-    <!-- PAN-INDIAN LANGUAGE SELECTOR BAR -->
-    <div class="lang-bar">
-      <span class="lang-label">Language:</span>
-      <button class="lang-pill active" data-lang="en-IN">English EN</button>
-      <button class="lang-pill" data-lang="te-IN">తెలుగు TE</button>
-      <button class="lang-pill" data-lang="ta-IN">தமிழ் TA</button>
-      <button class="lang-pill" data-lang="kn-IN">ಕನ್ನಡ KN</button>
-      <button class="lang-pill" data-lang="hi-IN">हिन्दी HI</button>
-      <button class="lang-pill" data-lang="mr-IN">मराठी MR</button>
-      <button class="lang-pill" data-lang="or-IN">ଓଡ଼ିଆ OR</button>
+    <!-- PAN-INDIAN LANGUAGE & TIMBRE VOICE SELECTORS -->
+    <div class="selectors-wrapper">
+      <div class="lang-bar">
+        <span class="lang-label">Language:</span>
+        <button class="lang-pill active" data-lang="en-IN">English EN</button>
+        <button class="lang-pill" data-lang="te-IN">తెలుగు TE</button>
+        <button class="lang-pill" data-lang="ta-IN">தமிழ் TA</button>
+        <button class="lang-pill" data-lang="kn-IN">ಕನ್ನಡ KN</button>
+        <button class="lang-pill" data-lang="hi-IN">हिन्दी HI</button>
+        <button class="lang-pill" data-lang="mr-IN">मराठी MR</button>
+        <button class="lang-pill" data-lang="or-IN">ଓଡ଼ିଆ OR</button>
+      </div>
+
+      <div class="voice-bar">
+        <span class="voice-label">Timbre Voice:</span>
+        <button class="voice-pill active" data-voice="Lakshmi" title="Warm & Universal Female Voice">
+          👩 Lakshmi <span class="voice-sub">Universal</span>
+        </button>
+        <button class="voice-pill" data-voice="Shivani" title="Expressive Modern Female Voice">
+          👩 Shivani <span class="voice-sub">Expressive</span>
+        </button>
+        <button class="voice-pill" data-voice="Avinash" title="Clear & Confident Male Voice">
+          👨 Avinash <span class="voice-sub">Deep Male</span>
+        </button>
+        <button class="voice-pill" data-voice="Nalini" title="Soft Female Voice (English)">
+          👩 Nalini <span class="voice-sub">Soft</span>
+        </button>
+        <div id="voiceAckBadge" class="voice-ack-badge">
+          <span class="pulse-dot"></span>
+          <span id="activeVoiceInfo">Lakshmi (English)</span>
+        </div>
+      </div>
     </div>
 
     <!-- HERO LIVE COMMAND & TRANSCRIPT CARD -->
@@ -1244,6 +1476,34 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
         <div id="transcriptText" class="transcript-content placeholder">
           Tap the transmitter or type a command below...
+        </div>
+      </div>
+
+      <!-- Real-Time Latency Telemetry Candy Strip -->
+      <div id="latencyStrip" class="latency-strip">
+        <div class="latency-chip vad" title="Voice Activity Detection Speech Capture Duration">
+          <span class="chip-label">🎙️ VAD</span>
+          <span id="latVad" class="chip-val">--</span>
+        </div>
+        <div class="latency-chip stt" title="Prisma v3.0 STT Model RoundTrip">
+          <span class="chip-label">⚡ STT</span>
+          <span id="latStt" class="chip-val">--</span>
+        </div>
+        <div class="latency-chip router" title="NLP Intent Router & Normalizer">
+          <span class="chip-label">🧠 Router</span>
+          <span id="latRouter" class="chip-val">--</span>
+        </div>
+        <div class="latency-chip exec" title="Target Device Execution Time">
+          <span class="chip-label">📱 Exec</span>
+          <span id="latExec" class="chip-val">--</span>
+        </div>
+        <div class="latency-chip tts" title="Timbre v3.0 TTS Voice Synthesis">
+          <span class="chip-label">🔊 TTS</span>
+          <span id="latTts" class="chip-val">--</span>
+        </div>
+        <div class="latency-chip total" title="Total End-to-End Pipeline Latency">
+          <span class="chip-label">⏱️ Total</span>
+          <span id="latTotal" class="chip-val">--</span>
         </div>
       </div>
 
@@ -1281,6 +1541,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
           <button id="btnStopTask" class="btn-stop-task" title="Stop recording or cancel active task [Esc]">
             <span class="stop-icon">⏹</span>
             <span>Stop [Esc]</span>
+          </button>
+
+          <!-- Always-On Vinda Mode Toggle -->
+          <button id="btnAlwaysListen" class="btn-always-listen" title="Continuous Listening: Only reacts when you say 'Vinda'">
+            <span class="vinda-icon">⚡</span>
+            <span id="alwaysListenLabel">Always On: Vinda</span>
           </button>
 
           <!-- Soundwave Equalizer -->
@@ -1372,7 +1638,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     // State Variables
     let currentLanguage = 'en-IN';
+    let currentVoice = 'Lakshmi';
     let isTransmitting = false;
+    let currentAckAudio = null;
 
     // DOM References
     const pillTransmitter = document.getElementById('pillTransmitter');
@@ -1391,13 +1659,69 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     const confirmationBanner = document.getElementById('confirmationBanner');
     const confirmQuestion = document.getElementById('confirmQuestion');
 
+    const LANG_LABELS = {
+      'en-IN': 'English',
+      'te-IN': 'Telugu',
+      'ta-IN': 'Tamil',
+      'kn-IN': 'Kannada',
+      'hi-IN': 'Hindi',
+      'mr-IN': 'Marathi',
+      'or-IN': 'Odia'
+    };
+
+    function playVoiceAcknowledgement(type = 'lang') {
+      const activeVoiceInfo = document.getElementById('activeVoiceInfo');
+      if (activeVoiceInfo) {
+        activeVoiceInfo.textContent = `${currentVoice} (${LANG_LABELS[currentLanguage] || currentLanguage})`;
+      }
+
+      fetch(`/api/acknowledge?lang=${encodeURIComponent(currentLanguage)}&voice=${encodeURIComponent(currentVoice)}&type=${type}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data && data.text) {
+            transcriptBox.classList.add('active');
+            transcriptText.className = 'transcript-content';
+            transcriptText.textContent = `"${data.text}"`;
+
+            appendLog('TTS', `🔊 [${data.voice} // ${data.lang}]: "${data.text}"`);
+
+            if (data.audio_url) {
+              if (currentAckAudio) {
+                try { currentAckAudio.pause(); } catch(e) {}
+              }
+              currentAckAudio = new Audio(data.audio_url + '?t=' + Date.now());
+              currentAckAudio.play().catch(err => {
+                console.log('Browser audio playback handled:', err);
+              });
+            }
+          }
+        })
+        .catch(err => {
+          console.error('Failed to trigger voice acknowledgment:', err);
+        });
+    }
+
     // Language Pill Selector
     document.querySelectorAll('.lang-pill').forEach(pill => {
       pill.addEventListener('click', () => {
+        if (pill.classList.contains('active')) return;
         document.querySelectorAll('.lang-pill').forEach(p => p.classList.remove('active'));
         pill.classList.add('active');
         currentLanguage = pill.getAttribute('data-lang') || 'en-IN';
-        appendLog('SYS', `Language switched to ${currentLanguage} (${pill.textContent.trim()})`);
+        appendLog('SYS', `🌐 Language switched to ${currentLanguage} (${pill.textContent.trim()})`);
+        playVoiceAcknowledgement('lang');
+      });
+    });
+
+    // Timbre Voice Pill Selector
+    document.querySelectorAll('.voice-pill').forEach(pill => {
+      pill.addEventListener('click', () => {
+        if (pill.classList.contains('active')) return;
+        document.querySelectorAll('.voice-pill').forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+        currentVoice = pill.getAttribute('data-voice') || 'Lakshmi';
+        appendLog('SYS', `🎙️ Timbre Voice switched to ${currentVoice}`);
+        playVoiceAcknowledgement('voice');
       });
     });
 
@@ -1537,6 +1861,53 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       .catch(err => appendLog('ERROR', 'Delete error: ' + err));
     }
 
+    let isAlwaysListening = false;
+    const btnAlwaysListen = document.getElementById('btnAlwaysListen');
+    const alwaysListenLabel = document.getElementById('alwaysListenLabel');
+
+    function toggleAlwaysListening() {
+      if (isAlwaysListening) {
+        stopTask();
+      } else {
+        stopTask();
+        setTimeout(() => {
+          startAlwaysListening();
+        }, 300);
+      }
+    }
+
+    function startAlwaysListening() {
+      if (isTransmitting) return;
+      isTransmitting = true;
+      isAlwaysListening = true;
+
+      if (btnAlwaysListen) {
+        btnAlwaysListen.classList.add('active');
+        alwaysListenLabel.textContent = 'Active: Say "Vinda"';
+      }
+      pillTransmitter.classList.add('transmitting');
+      pillLabel.textContent = 'Listening for "Vinda"... (Tap to Stop)';
+      if (btnStopTask) btnStopTask.classList.add('active');
+      soundwave.classList.add('active');
+      transcriptBox.classList.add('active');
+      transcriptText.className = 'transcript-content';
+      transcriptText.textContent = `Always listening in ${currentLanguage}... Say "Vinda" to command! Ambient speech is filtered.`;
+
+      routeBadge.className = 'route-candy-tag';
+      routeBadge.innerHTML = '<span>🟢 Always On: Vinda</span>';
+
+      fetch(`/api/listen?continuous=1&lang=${encodeURIComponent(currentLanguage)}&voice=${encodeURIComponent(currentVoice)}`, { method: 'POST' })
+        .then(r => r.json())
+        .catch(err => {
+          appendLog('ERROR', 'Failed to engage always-listening: ' + err);
+          resetTransmitter();
+        });
+    }
+
+    if (btnAlwaysListen) {
+      btnAlwaysListen.addEventListener('click', toggleAlwaysListening);
+    }
+
     // Trigger Live Microphone Broadcast
     function startListening() {
       if (isTransmitting) return;
@@ -1553,7 +1924,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       routeBadge.className = 'route-candy-tag';
       routeBadge.innerHTML = '<span>● Capturing</span>';
 
-      fetch(`/api/listen?lang=${currentLanguage}`, { method: 'POST' })
+      fetch(`/api/listen?lang=${encodeURIComponent(currentLanguage)}&voice=${encodeURIComponent(currentVoice)}`, { method: 'POST' })
         .then(r => r.json())
         .catch(err => {
           appendLog('ERROR', 'Failed to engage microphone: ' + err);
@@ -1583,7 +1954,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       transcriptText.className = 'transcript-content';
       transcriptText.textContent = `"${promptText}"`;
 
-      fetch(`/api/simulate?prompt=${encodeURIComponent(promptText)}&lang=${currentLanguage}`, { method: 'POST' })
+      fetch(`/api/simulate?prompt=${encodeURIComponent(promptText)}&lang=${encodeURIComponent(currentLanguage)}&voice=${encodeURIComponent(currentVoice)}`, { method: 'POST' })
         .then(r => r.json())
         .catch(err => {
           appendLog('ERROR', 'Execution failed: ' + err);
@@ -1593,7 +1964,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
     // Stop / Abort Task
     function stopTask() {
-      appendLog('SYS', '⏹ Stopping task and resetting pipeline...');
+      appendLog('SYS', '⏹ Stopping listening & active task...');
+      isAlwaysListening = false;
+      if (btnAlwaysListen) {
+        btnAlwaysListen.classList.remove('active');
+        alwaysListenLabel.textContent = 'Always On: Vinda';
+      }
       resetTransmitter();
       routeBadge.className = 'route-candy-tag';
       routeBadge.textContent = '● Standby';
@@ -1614,10 +1990,10 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     function resetTransmitter() {
       isTransmitting = false;
       pillTransmitter.classList.remove('transmitting');
-      pillLabel.textContent = 'Push to Talk [Space]';
+      pillLabel.textContent = isAlwaysListening ? 'Listening for "Vinda"... (Tap to Stop)' : 'Push to Talk [Space]';
       soundwave.classList.remove('active');
       transcriptBox.classList.remove('active');
-      if (btnStopTask) btnStopTask.classList.remove('active');
+      if (btnStopTask && !isAlwaysListening) btnStopTask.classList.remove('active');
     }
 
     // Device Selection Discovery & Switcher
@@ -1708,19 +2084,70 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       pillLabel.textContent = 'Processing command... ⚡';
     });
 
-    socket.on('tx_complete', () => {
-      resetTransmitter();
-      routeBadge.className = 'route-candy-tag';
-      routeBadge.textContent = '● Standby';
+    socket.on('tx_complete', (data) => {
+      if (data && data.stopped_by_user) {
+        isAlwaysListening = false;
+        if (btnAlwaysListen) {
+          btnAlwaysListen.classList.remove('active');
+          alwaysListenLabel.textContent = 'Always On: Vinda';
+        }
+      }
+      if (!isAlwaysListening) {
+        resetTransmitter();
+        routeBadge.className = 'route-candy-tag';
+        routeBadge.textContent = '● Standby';
+      } else {
+        pillLabel.textContent = 'Listening for "Vinda"... (Tap to Stop)';
+        routeBadge.className = 'route-candy-tag';
+        routeBadge.innerHTML = '<span>🟢 Always On: Vinda</span>';
+      }
     });
 
-    socket.on('memory_updated', (data) => {
-      renderContacts(data);
+    socket.on('wake_activated', (data) => {
+      routeBadge.className = 'route-candy-tag';
+      routeBadge.innerHTML = '<span>✨ Vinda Activated</span>';
+      transcriptBox.classList.add('active');
+      transcriptText.className = 'transcript-content';
+      transcriptText.textContent = data.line || '✨ Trigger "Vinda" recognized!';
+    });
+
+    socket.on('wake_filtered', (data) => {
+      transcriptBox.classList.add('active');
+      transcriptText.className = 'transcript-content';
+      transcriptText.textContent = '🤫 Ambient conversation filtered (No "Vinda" trigger)';
+    });
+
+    socket.on('task_stopped', (data) => {
+      appendLog('SYS', '🛑 Task stopped by voice command.');
+      stopTask();
+    });
+
+    socket.on('telemetry_timing', (data) => {
+      if (!data) return;
+      const elVad = document.getElementById('latVad');
+      const elStt = document.getElementById('latStt');
+      const elRouter = document.getElementById('latRouter');
+      const elExec = document.getElementById('latExec');
+      const elTts = document.getElementById('latTts');
+      const elTotal = document.getElementById('latTotal');
+
+      if (elVad && data.vad) elVad.textContent = data.vad;
+      if (elStt && data.stt) elStt.textContent = data.stt;
+      if (elRouter && data.router) elRouter.textContent = data.router;
+      if (elExec && data.exec) elExec.textContent = data.exec;
+      if (elTts && data.tts) elTts.textContent = data.tts;
+      if (elTotal && data.total) elTotal.textContent = data.total;
+
+      const strip = document.getElementById('latencyStrip');
+      if (strip) {
+        strip.style.borderColor = '#3B82F6';
+        setTimeout(() => { strip.style.borderColor = 'var(--border-strong)'; }, 600);
+      }
     });
 
     // PTT Click & Mouse Events
     pillTransmitter.addEventListener('click', () => {
-      if (isTransmitting) {
+      if (isTransmitting || isAlwaysListening) {
         stopTask();
       } else {
         startListening();
@@ -1925,34 +2352,46 @@ def api_sync_contacts():
 
 @app.route("/api/listen", methods=["POST"])
 def api_listen():
-    """Trigger microphone audio recording and pipeline execution with language selection."""
+    """Trigger microphone audio recording and pipeline execution with language & voice selection."""
     if execution_lock.locked():
         return jsonify({"status": "busy", "message": "Pipeline already active"}), 429
 
     lang = request.args.get("lang") or "en-IN"
+    voice = request.args.get("voice") or "Lakshmi"
+    continuous = request.args.get("continuous") in ["1", "true", True]
     if request.is_json:
         payload = request.get_json(silent=True) or {}
         lang = payload.get("lang") or lang
+        voice = payload.get("voice") or voice
+        continuous = payload.get("continuous", continuous)
+
+    cmd_args = ["--lang", lang, "--voice", voice]
+    mode_name = f"LIVE_MIC_{lang}_{voice}"
+    if continuous:
+        cmd_args.extend(["--continuous", "--wake-word", "vinda", "--require-wake-word"])
+        mode_name = f"ALWAYS_ON_{lang}_{voice}"
 
     thread = threading.Thread(
         target=run_voice_commander_streaming,
-        args=(["--lang", lang], f"LIVE_MIC_{lang}"),
+        args=(cmd_args, mode_name),
         daemon=True
     )
     thread.start()
-    return jsonify({"status": "initiated", "mode": "LIVE_MIC", "lang": lang})
+    return jsonify({"status": "initiated", "mode": mode_name, "lang": lang, "voice": voice, "continuous": continuous})
 
 
 @app.route("/api/simulate", methods=["GET", "POST"])
 def api_simulate():
-    """Trigger text command execution with language support."""
+    """Trigger text command execution with language and voice support."""
     prompt = request.args.get("prompt")
     lang = request.args.get("lang") or "en-IN"
+    voice = request.args.get("voice") or "Lakshmi"
 
     if not prompt and request.is_json:
         payload = request.get_json(silent=True) or {}
         prompt = payload.get("text") or payload.get("prompt")
         lang = payload.get("lang") or lang
+        voice = payload.get("voice") or voice
 
     if not prompt:
         return jsonify({"status": "error", "message": "No prompt provided"}), 400
@@ -1966,13 +2405,109 @@ def api_simulate():
     if execution_lock.locked():
         return jsonify({"status": "busy", "message": "Pipeline already active"}), 429
 
+    cmd_args = ["--lang", lang, "--voice", voice, "--text-only", prompt]
     thread = threading.Thread(
         target=run_voice_commander_streaming,
-        args=(["--lang", lang, "--text-only", prompt], f"PROMPT: {prompt[:20]} ({lang})"),
+        args=(cmd_args, f"PROMPT: {prompt[:20]} ({lang})"),
         daemon=True
     )
     thread.start()
-    return jsonify({"status": "initiated", "prompt": prompt, "lang": lang})
+    return jsonify({"status": "initiated", "prompt": prompt, "lang": lang, "voice": voice})
+
+
+LANGUAGE_ACKNOWLEDGMENTS = {
+    "en-IN": {
+        "switch": "Language set to English. Ready for your command.",
+        "voice": "Voice changed to {voice}. How can I help you today?"
+    },
+    "te-IN": {
+        "switch": "భాష తెలుగుగా మార్చబడింది. మీ ఆదేశం కోసం వేచి చూస్తున్నాను.",
+        "voice": "వాయిస్ {voice}గా మార్చబడింది. నేను సిద్ధంగా ఉన్నాను."
+    },
+    "ta-IN": {
+        "switch": "மொழி தமிழுக்கு மாற்றப்பட்டது. உங்கள் கட்டளைக்காக காத்திருக்கிறேன்.",
+        "voice": "குரல் {voice}க்கு மாற்றப்பட்டது. நான் தயாராக உள்ளேன்."
+    },
+    "kn-IN": {
+        "switch": "ಭಾಷೆಯನ್ನು ಕನ್ನಡಕ್ಕೆ ಬದಲಾಯಿಸಲಾಗಿದೆ. ನಿಮ್ಮ ಆಜ್ಞೆಗಾಗಿ ಕಾಯುತ್ತಿದ್ದೇನೆ.",
+        "voice": "ಧ್ವನಿ {voice}ಗೆ ಬದಲಾಯಿಸಲಾಗಿದೆ. ನಾನು ಸಿದ್ಧನಾಗಿದ್ದೇನೆ."
+    },
+    "hi-IN": {
+        "switch": "भाषा हिन्दी में सेट कर दी गई है। आपके आदेश की प्रतीक्षा है।",
+        "voice": "आवाज़ {voice} में सेट कर दी गई है। मैं तैयार हूँ।"
+    },
+    "mr-IN": {
+        "switch": "भाषा मराठीमध्ये बदलली आहे. आपल्या आदेशाची वाट पाहत आहे.",
+        "voice": "आवाज {voice} मध्ये बदलला आहे. मी तयार आहे."
+    },
+    "or-IN": {
+        "switch": "ଭାଷା ଓଡ଼ିଆକୁ ପରିବର୍ତ୍ତନ କରାଗଲା। ଆପଣଙ୍କ ଆଦେଶକୁ ଅପେକ୍ଷା।",
+        "voice": "ସ୍ୱର {voice}କୁ ସେଟ୍ କରାଗଲା। ମୁଁ ପ୍ରସ୍ତୁତ ଅଛି।"
+    }
+}
+
+
+@app.route("/api/audio/<filename>")
+def api_serve_audio(filename):
+    """Serve synthesized WAV audio files for browser playback."""
+    clean_name = os.path.basename(filename)
+    audio_path = WORKSPACE_DIR / clean_name
+    if audio_path.exists():
+        return send_file(str(audio_path), mimetype="audio/wav")
+    return jsonify({"error": "Audio file not found"}), 404
+
+
+@app.route("/api/acknowledge", methods=["GET", "POST"])
+def api_acknowledge():
+    """Synthesizes and speaks acknowledgment in selected language and voice."""
+    lang = request.args.get("lang") or "en-IN"
+    voice = request.args.get("voice") or "Lakshmi"
+    ack_type = request.args.get("type") or "lang"
+
+    if request.is_json:
+        payload = request.get_json(silent=True) or {}
+        lang = payload.get("lang") or lang
+        voice = payload.get("voice") or voice
+        ack_type = payload.get("type") or ack_type
+
+    canonical_lang = resolve_language(lang)
+    lang_entry = LANGUAGE_ACKNOWLEDGMENTS.get(canonical_lang, LANGUAGE_ACKNOWLEDGMENTS["en-IN"])
+    if ack_type == "voice":
+        ack_text = lang_entry["voice"].format(voice=voice)
+    else:
+        ack_text = lang_entry["switch"]
+
+    # Generate or reuse cached acknowledgement WAV
+    safe_lang = canonical_lang.replace("-", "_")
+    safe_voice = re.sub(r'[^a-zA-Z0-9_]', '', voice)
+    ack_filename = f"ack_{safe_lang}_{safe_voice}_{ack_type}.wav"
+    ack_filepath = WORKSPACE_DIR / ack_filename
+
+    try:
+        if not ack_filepath.exists() or ack_filepath.stat().st_size == 0:
+            synthesize_speech(ack_text, lang=canonical_lang, voice=voice, output_path=str(ack_filepath))
+
+        # Play audio on host PC default speakers (background thread)
+        threading.Thread(target=play_audio_file, args=(str(ack_filepath),), daemon=True).start()
+    except Exception as e:
+        print(f"[Ack] Synthesis error: {e}")
+
+    # Emit SocketIO event so connected telemetry console sees the acknowledgement
+    socketio.emit("tts_event", {"text": ack_text})
+    socketio.emit("log_event", {
+        "type": "TTS",
+        "line": f"🔊 [{voice} // {canonical_lang}] {ack_text}",
+        "timestamp": time.strftime("%H:%M:%S")
+    })
+
+    return jsonify({
+        "status": "ok",
+        "lang": canonical_lang,
+        "voice": voice,
+        "type": ack_type,
+        "text": ack_text,
+        "audio_url": f"/api/audio/{ack_filename}"
+    })
 
 
 @app.route("/api/stop", methods=["GET", "POST"])
@@ -2003,10 +2538,11 @@ def api_stop():
         finally:
             current_process = None
 
-    # 3. Kill any detached Artemis runners or child python CLI processes
+    # 3. Kill any detached Artemis runners or child python CLI processes safely
     try:
+        current_pid = os.getpid()
         subprocess.run(
-            'powershell -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like \'*artemis run*\' -or $_.CommandLine -like \'*voice_commander.py*\' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"',
+            f'powershell -Command "Get-Process -Name python -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {current_pid} }} | Stop-Process -Force -ErrorAction SilentlyContinue"',
             shell=True,
             capture_output=True,
             check=False,

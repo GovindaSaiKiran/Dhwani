@@ -38,6 +38,18 @@ import threading
 import time
 import urllib.parse
 
+# Ensure UTF-8 stdout/stderr on Windows consoles
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Process tracking for clean aborts
 active_artemis_proc = None
 
@@ -81,12 +93,46 @@ from gnani_bridge import (
     GNANI_API_KEY,
     KEY_ID_HEADER,
     PAN_INDIAN_LANGUAGES,
+    get_last_stt_latency_ms,
+    get_last_tts_latency_ms,
     play_audio_file,
     resolve_language,
-    synthesize_and_play as gnani_synth_play,
+    synthesize_and_play as _raw_gnani_synth_play,
     synthesize_speech,
     transcribe_audio as gnani_transcribe,
 )
+
+ACTIVE_VOICE = os.getenv("ACTIVE_VOICE", "Lakshmi")
+
+
+class TelemetryTimer:
+    """Accurately records latency across every stage of the voice assistant pipeline."""
+
+    def __init__(self):
+        self.vad_duration_s: float = 0.0
+        self.stt_ms: float = 0.0
+        self.router_ms: float = 0.0
+        self.exec_ms: float = 0.0
+        self.tts_ms: float = 0.0
+        self.t_turn_start: float = time.perf_counter()
+
+    def report(self) -> str:
+        total_ms = (time.perf_counter() - self.t_turn_start) * 1000.0
+        line = (
+            f"[Telemetry] ⏱️ TIMING BREAKDOWN: "
+            f"VAD={self.vad_duration_s:.2f}s | "
+            f"STT={self.stt_ms:.0f}ms | "
+            f"Router={self.router_ms:.1f}ms | "
+            f"Exec={self.exec_ms:.0f}ms | "
+            f"TTS={self.tts_ms:.0f}ms | "
+            f"Total={total_ms:.0f}ms"
+        )
+        print(line, flush=True)
+        return line
+
+def gnani_synth_play(text: str, lang: str = "en-IN", voice: str = None, play_audio: bool = True, output_path: str = "response.wav") -> str:
+    chosen_voice = voice or ACTIVE_VOICE or "Lakshmi"
+    return _raw_gnani_synth_play(text, lang=lang, voice=chosen_voice, play_audio=play_audio, output_path=output_path)
 
 # ==============================================================================
 # Configuration & Hardware Targeting
@@ -127,12 +173,15 @@ USER_MEMORY_FILE = WORKSPACE_DIR / "user_memory.json"
 # ==============================================================================
 # 1. Low-Level ADB Command Execution
 # ==============================================================================
-def run_adb(args: list[str], serial: str = TARGET_DEVICE_SERIAL) -> subprocess.CompletedProcess:
+def run_adb(args: list[str], serial: str = TARGET_DEVICE_SERIAL, timeout: float = 4.0) -> subprocess.CompletedProcess:
     """Executes an ADB command on the target serial."""
     env = os.environ.copy()
     env["ANDROID_USER_HOME"] = str(WORKSPACE_DIR / ".android")
     cmd = [ADB_BIN, "-s", serial] + args
-    return subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, check=False, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, returncode=-1, stdout="", stderr="ADB command timed out")
 
 
 def toggle_torch_samsung(action: str = "toggle", serial: str = TARGET_DEVICE_SERIAL) -> tuple[bool, str]:
@@ -585,7 +634,8 @@ APP_CATALOG = {
     "browser": {"package": "com.android.chrome", "category": "browser", "name": "Google Chrome"},
     "settings": {"intent": "android.settings.SETTINGS", "name": "Settings"},
     "camera": {"intent": "android.media.action.STILL_IMAGE_CAMERA", "name": "Camera"},
-    "gallery": {"intent": "android.intent.action.MAIN:android.intent.category.APP_GALLERY", "name": "Gallery"},
+    "gallery": {"package": "com.sec.android.gallery3d", "name": "Gallery"},
+    "photos": {"package": "com.google.android.apps.photos", "name": "Google Photos"},
     "calculator": {"package": "com.sec.android.app.popupcalculator", "name": "Calculator"},
     "files": {"package": "com.sec.android.app.myfiles", "name": "My Files"},
     "clock": {"intent": "android.intent.action.SHOW_ALARMS", "name": "Clock"},
@@ -793,6 +843,8 @@ def normalize_indian_command(raw_text: str, lang_code: str = "en-IN") -> str:
     text = re.sub(r"[.!?,;:\"']+$", "", text).strip()
 
     # Stage D: SOV-to-SVO grammar inversion for Indian languages (e.g. "nanna call" -> "call nanna")
+    text = re.sub(r"(?:^|\s+)(?:చేయి|చెయ్యి|కరో|పన్ను|మాడు|करा|କର)(?:\s+|$)", " ", text).strip()
+    text = re.sub(r"\s+", " ", text).strip()
     text = re.sub(
         r"^(?P<obj>.+?)\s+(?P<verb>call|dial|open|launch|start|run|turn\s+on|turn\s+off)$",
         r"\g<verb> \g<obj>",
@@ -820,36 +872,177 @@ def calculate_rms(samples: np.ndarray) -> float:
     return float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)))
 
 
+# ==============================================================================
+# Wake Word & Trigger Extraction ("Vinda" & Multilingual Phonetics)
+# ==============================================================================
+WAKE_WORD_PATTERN = (
+    r"^(?:(?:hey|hi|hello|ok|okay|oye)\s+)?"
+    r"(?:vinda|winda|binda|venda|windha|vindha|govinda|winter|window|vendor|"
+    r"విందా|వింద|विंदा|विन्दा|विन्द|விந்தா|விந்த|ವಿಂದಾ|ವಿಂದ|ବିନ୍ଦା|ଭିନ୍ଦା)"
+    r"[\s,:\-]*"
+)
+
+TRIGGER_PROMPTS = {
+    "en-IN": "Yes? How can I help you?",
+    "te-IN": "చెప్పండి, నేను మీకు ఎలా సహాయపడగలను?",
+    "hi-IN": "हाँ, मैं आपकी क्या मदद कर सकता हूँ?",
+    "ta-IN": "சொல்லுங்கள், நான் உங்களுக்கு எவ்வாறு உதவ முடியும்?",
+    "kn-IN": "ಹೇಳಿ, ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?",
+    "mr-IN": "बोला, मी तुम्हाला कशी मदत करू शकतो?",
+    "or-IN": "କୁହନ୍ତୁ, ମୁଁ ଆପଣଙ୍କୁ କିପରି ସାହାଯ୍ୟ କରିପାରିବି?",
+}
+
+
+def extract_wake_word(text: str, wake_word: str = "vinda") -> tuple[bool, str]:
+    """Detects if 'Vinda' trigger exists and returns (has_trigger, stripped_command)."""
+    if not text:
+        return False, ""
+
+    text_clean = text.strip()
+
+    # 1. Leading match: "Vinda, open youtube" / "Hey Vinda call nanna"
+    leading_match = re.search(WAKE_WORD_PATTERN, text_clean, re.IGNORECASE)
+    if leading_match:
+        stripped = text_clean[leading_match.end():].strip()
+        stripped = re.sub(r"^[^\w\s]+", "", stripped).strip()
+        return True, stripped
+
+    # 2. Anywhere in text: "Please Vinda open camera"
+    embedded_match = re.search(
+        r"\b(?:vinda|winda|binda|venda|windha|vindha|govinda|"
+        r"విందా|వింద|विंदा|विन्दा|विन्द|விந்தா|விந்த|ವಿಂದಾ|ವಿಂದ|ବିନ୍ଦା|ଭିନ୍ଦା)\b[\s,:\-]*",
+        text_clean,
+        re.IGNORECASE
+    )
+    if embedded_match:
+        before = text_clean[:embedded_match.start()].strip()
+        after = text_clean[embedded_match.end():].strip()
+        combined = f"{before} {after}".strip()
+        combined = re.sub(r"\s+", " ", combined).strip()
+        return True, combined
+
+    return False, text_clean
+
+
+def is_stop_command(text: str, lang_code: str = "en-IN") -> bool:
+    """Checks if text contains an explicit emergency stop/cancel command in any supported language."""
+    if not text:
+        return False
+    lower = text.strip().lower()
+    stop_tokens = [
+        "stop", "cancel", "abort", "halt", "pause", "exit", "quit", "nevermind", "never mind",
+        "ఆపు", "ఆపండి", "వద్దు", "ఆపరా", "ఆపుము", "రుకో", "रोको", "रुक", "बस", "बंद करो", "रोक दो",
+        "थांबवा", "थांबा", "नको", "बंद करा", "நிறுத்து", "நில்", "போதும்", "வேண்டாம்",
+        "ನಿಲ್ಲಿಸು", "ನಿಲ್ಲು", "ಬೇಡ", "ବନ୍ଦ କର", "ଅଟକ", "ରୁହ",
+        "ruk", "roko", "bas", "aapu", "aapandi", "nillisu", "thambva", "band kara", "band karo"
+    ]
+    if lower in stop_tokens:
+        return True
+    pattern = (
+        r"\b(?:(?:hey\s+|hi\s+|hello\s+)?(?:vinda|winda|binda)\s+)?"
+        r"(?:stop|cancel|abort|halt|pause|never\s*mind|exit|quit|ruk|roko|bas|aapu|aapandi|band\s*karo|band\s*kara|thambva)\b"
+    )
+    if re.search(pattern, lower, re.IGNORECASE):
+        return True
+    for token in ["ఆపు", "ఆపండి", "వద్దు", "రుకో", "रोको", "बंद करो", "थांबवा", "थांबा", "बंद करा", "நிறுத்து", "நில்", "ನಿಲ್ಲಿಸು", "ನಿಲ್ಲು", "ବନ୍ଦ କର"]:
+        if token in text:
+            return True
+    return False
+
+
+def abort_active_tasks(serial: str = TARGET_DEVICE_SERIAL, lang_code: str = "en-IN", play_audio: bool = True) -> str:
+    """Terminates active Artemis runners, resets phone to Home, and announces cancellation."""
+    global active_artemis_proc
+    if active_artemis_proc:
+        try:
+            pid = active_artemis_proc.pid
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, check=False)
+            else:
+                active_artemis_proc.terminate()
+                active_artemis_proc.kill()
+        except Exception:
+            pass
+        active_artemis_proc = None
+
+    try:
+        requests.post("http://127.0.0.1:8000/api/stop", json={"all": True}, timeout=1.0)
+    except Exception:
+        pass
+
+    # Send Back and Home keyevents to device
+    run_adb(["shell", "input", "keyevent", "4"], serial=serial)
+    run_adb(["shell", "input", "keyevent", "3"], serial=serial)
+
+    stop_messages = {
+        "en-IN": "Task stopped. Returning to home screen.",
+        "te-IN": "టాస్క్ ఆపివేయబడింది. హోమ్ స్క్రీన్‌కు తిరిగి వెళ్తున్నాను.",
+        "hi-IN": "कार्य रोक दिया गया है। होम स्क्रीन पर वापस जा रहे हैं।",
+        "ta-IN": "பணி நிறுத்தப்பட்டது. முகப்புத் திரைக்குத் திரும்புகிறது.",
+        "kn-IN": "ಕಾರ್ಯವನ್ನು ನಿಲ್ಲಿಸಲಾಗಿದೆ. ಮುಖಪುಟ ಪರದೆಗೆ ಹಿಂತಿರುಗಲಾಗುತ್ತಿದೆ.",
+        "mr-IN": "कार्य थांबवले आहे. होम स्क्रीनवर परत जात आहे.",
+        "or-IN": "କାର୍ଯ୍ୟ ବନ୍ଦ ହେଲା। ମୂଳ ପରଦାକୁ ଫେରୁଛି।",
+    }
+    msg = stop_messages.get(lang_code, stop_messages["en-IN"])
+    gnani_synth_play(msg, lang=lang_code, play_audio=play_audio)
+    return msg
+
+
+LAST_RECORDED_DURATION: float = 0.0
+
+
+def get_last_recorded_duration() -> float:
+    """Returns the recorded audio duration in seconds of the most recent capture."""
+    return LAST_RECORDED_DURATION
+
+
 def record_audio(
     silence_threshold: float = 320.0,
-    silence_duration: float = 1.6,
-    max_timeout: float = 12.0,
+    silence_duration: float = 1.1,
+    max_timeout: float = 10.0,
     sample_rate: int = AUDIO_SAMPLE_RATE,
     output_path: str = VOICE_COMMAND_FILE,
+    require_speech: bool = False,
+    idle_timeout: float = 2.8,
 ) -> str:
     """Records audio using continuous chunk reading with dynamic Voice Activity Detection (VAD)."""
+    global LAST_RECORDED_DURATION
     chunk_size = int(sample_rate * 0.1)  # 100ms
     speech_start_threshold = silence_threshold + 40.0
     speech_end_threshold = max(180.0, silence_threshold - 60.0)
 
-    print(f"\n[Microphone:VAD] 🎙️  Listening with auto-silence cutoff (speech > {speech_start_threshold:.0f}, silence < {speech_end_threshold:.0f})...", flush=True)
-
     frames = []
+    initial_chunks = []
     speech_started = False
     speech_start_time = None
     silence_start_time = None
+    calibrated = False
     start_time = time.time()
 
+    print(f"\n[Microphone:VAD] 🎙️  Listening with adaptive VAD (silence_break={silence_duration}s, idle={idle_timeout}s)...", flush=True)
+
     def handle_chunk(chunk_samples: np.ndarray) -> bool:
-        nonlocal speech_started, speech_start_time, silence_start_time
+        nonlocal speech_started, speech_start_time, silence_start_time, calibrated, speech_start_threshold, speech_end_threshold
         frames.append(chunk_samples)
         rms = calculate_rms(chunk_samples)
+
+        # Baseline noise floor calibration during first ~200ms
+        if not calibrated:
+            initial_chunks.append(rms)
+            if len(initial_chunks) >= 2:
+                baseline_rms = float(np.mean(initial_chunks))
+                speech_start_threshold = max(silence_threshold, baseline_rms * 1.6 + 30.0)
+                speech_end_threshold = max(160.0, baseline_rms * 1.15 + 15.0)
+                calibrated = True
 
         if not speech_started:
             if rms >= speech_start_threshold:
                 speech_started = True
                 speech_start_time = time.time()
-                print(f"[VAD] 🗣️  Speech detected (RMS: {rms:.1f})! Dynamic recording active.", flush=True)
+                print(f"[VAD] 🗣️  Speech detected (RMS: {rms:.1f} > {speech_start_threshold:.0f})! Dynamic recording active.", flush=True)
+            elif require_speech and (time.time() - start_time >= idle_timeout):
+                # Idle silence in continuous mode: cycle turn cleanly without burning STT API
+                return True
         else:
             time_speaking = time.time() - speech_start_time
             if rms < speech_end_threshold:
@@ -857,7 +1050,7 @@ def record_audio(
                     silence_start_time = time.time()
                 else:
                     silence_elapsed = time.time() - silence_start_time
-                    if time_speaking >= 0.6 and silence_elapsed >= silence_duration:
+                    if time_speaking >= 0.35 and silence_elapsed >= silence_duration:
                         print(f"[VAD] 🤫 Auto-silence cutoff triggered ({silence_elapsed:.2f}s trailing silence).", flush=True)
                         return True
             else:
@@ -897,12 +1090,17 @@ def record_audio(
                     print(f"[VAD] ⏱️  Failsafe max timeout ({max_timeout:.0f}s) reached.", flush=True)
                     break
 
+    if require_speech and not speech_started:
+        LAST_RECORDED_DURATION = 0.0
+        return ""
+
     if frames:
         full_audio = np.concatenate(frames)
     else:
         full_audio = np.zeros(sample_rate, dtype=np.int16)
 
     recorded_duration = len(full_audio) / sample_rate
+    LAST_RECORDED_DURATION = recorded_duration
     print(f"[Microphone] ✔ Recording finished ({recorded_duration:.2f}s). Saving to '{output_path}'", flush=True)
     sf.write(output_path, full_audio, sample_rate, subtype="PCM_16")
     return output_path
@@ -1167,20 +1365,66 @@ def dispatch_artemis_fallback(
     artemis_dir = WORKSPACE_DIR / "artemis"
     configured_profile = os.getenv("ARTEMIS_DEFAULT_PROFILE", "flash")
 
+    env = os.environ.copy()
+    venv_site = str(artemis_dir / ".venv" / "Lib" / "site-packages")
+    client_src = str(artemis_dir / "packages" / "artemis-client" / "src")
+    extra_paths = [venv_site, str(artemis_dir), client_src]
+    existing_pp = env.get("PYTHONPATH", "")
+    if existing_pp:
+        extra_paths.append(existing_pp)
+    env["PYTHONPATH"] = os.pathsep.join(extra_paths)
+    env["ARTEMIS_STANDALONE"] = "1"
+
     artemis_cmd = [
-        "uv", "run", "artemis", "run",
+        sys.executable, "-m", "artemis", "run",
         enriched_goal,
         "-s", serial,
         "--profile", configured_profile,
+        "--standalone",
     ]
     print(f"[Artemis] Executing in {artemis_dir}: {' '.join(artemis_cmd)}")
 
     global active_artemis_proc
     try:
-        proc = subprocess.Popen(artemis_cmd, cwd=str(artemis_dir))
+        proc = subprocess.Popen(artemis_cmd, cwd=str(artemis_dir), env=env)
         active_artemis_proc = proc
         proc.wait()
-        finish_msg = "Task completed successfully." if proc.returncode == 0 else "Task finished."
+
+        success_messages = {
+            "en-IN": "Task completed successfully.",
+            "te-IN": "టాస్క్ విజయవంతంగా పూర్తయింది.",
+            "hi-IN": "टास्क सफलतापूर्वक पूरा हो गया।",
+            "ta-IN": "பணி வெற்றிகரமாக முடிந்தது.",
+            "kn-IN": "ಕಾರ್ಯ ಯಶಸ್ವಿಯಾಗಿ ಪೂರ್ಣಗೊಂಡಿದೆ.",
+            "mr-IN": "काम यशस्वीरित्या पूर्ण झाले.",
+            "or-IN": "କାର୍ଯ୍ୟ ସଫଳତାର ସହ ସମାପ୍ତ ହେଲା."
+        }
+        stopped_messages = {
+            "en-IN": "Task was stopped.",
+            "te-IN": "టాస్క్ ఆపివేయబడింది.",
+            "hi-IN": "टास्क रोक दिया गया।",
+            "ta-IN": "பணி நிறுத்தப்பட்டது.",
+            "kn-IN": "ಕಾರ್ಯವನ್ನು ನಿಲ್ಲಿಸಲಾಗಿದೆ.",
+            "mr-IN": "कार्य थांबवले गेले.",
+            "or-IN": "କାର୍ଯ୍ୟ ବନ୍ଦ କରାଗଲା."
+        }
+        error_messages = {
+            "en-IN": "Task could not be completed. Please try again.",
+            "te-IN": "టాస్క్ పూర్తి కాలేదు. దయచేసి మళ్ళీ ప్రయత్నించండి.",
+            "hi-IN": "टास्क पूरा नहीं हो सका। कृपया पुनः प्रयास करें।",
+            "ta-IN": "பணியை முடிக்க முடியவில்லை. மீண்டும் முயற்சிக்கவும்.",
+            "kn-IN": "ಕಾರ್ಯವನ್ನು ಪೂರ್ಣಗೊಳಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ. ದಯವಿಟ್ಟು ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
+            "mr-IN": "कार्य पूर्ण होऊ शकले नाही. कृपया पुन्हा प्रयत्न करा.",
+            "or-IN": "କାର୍ଯ୍ୟ ସମ୍ପୂର୍ଣ୍ଣ ହୋଇପାରିଲା ନାହିଁ। ଦୟାକରି ପୁନର୍ବାର ଚେଷ୍ଟା କରନ୍ତୁ."
+        }
+
+        if proc.returncode == 0:
+            finish_msg = success_messages.get(lang_code, success_messages["en-IN"])
+        elif proc.returncode in (-15, -9, 130, -2, -1) or active_artemis_proc is None:
+            finish_msg = stopped_messages.get(lang_code, stopped_messages["en-IN"])
+        else:
+            finish_msg = error_messages.get(lang_code, error_messages["en-IN"])
+
         gnani_synth_play(finish_msg, lang=lang_code, play_audio=True)
         return finish_msg
     except Exception as e:
@@ -1199,12 +1443,31 @@ def execute_on_device(
     serial: str = TARGET_DEVICE_SERIAL,
     lang_code: str = "en-IN",
     play_audio: bool = True,
+    timer: TelemetryTimer | None = None,
 ) -> str:
     """Main execution orchestrator handling confirmation recovery, fast paths, and fallback."""
+    if timer is None:
+        timer = TelemetryTimer()
+
+    contacts_mgr.serial = serial
+
     raw_input = transcript.strip()
     if not raw_input:
         msg = "I did not catch any command. Please try speaking again."
+        t_tts = time.perf_counter()
         gnani_synth_play(msg, lang=lang_code, play_audio=play_audio)
+        timer.tts_ms = get_last_tts_latency_ms() or ((time.perf_counter() - t_tts) * 1000.0)
+        timer.report()
+        return msg
+
+    # 0. Emergency Abort / Stop Intent (Highest Precedence)
+    if is_stop_command(raw_input, lang_code=lang_code):
+        print(f"[Router:Emergency] 🛑 Stop requested: aborting active tasks and returning to home screen.", flush=True)
+        t_abort = time.perf_counter()
+        msg = abort_active_tasks(serial=serial, lang_code=lang_code, play_audio=play_audio)
+        timer.exec_ms = (time.perf_counter() - t_abort) * 1000.0
+        timer.tts_ms = get_last_tts_latency_ms()
+        timer.report()
         return msg
 
     # 1. Check for Pending Confirmation (Disambiguation / Recovery Flow)
@@ -1215,6 +1478,7 @@ def execute_on_device(
             action_type = pending.get("type")
             pending_mgr.clear_pending()
 
+            t_exec = time.perf_counter()
             if action_type == "whatsapp":
                 phone = clean_phone_number(pending.get("phone", ""))
                 msg_text = pending.get("message", "")
@@ -1225,77 +1489,217 @@ def execute_on_device(
                 time.sleep(2.5)
                 run_adb(["shell", "input", "keyevent", "66"], serial=serial)
                 feedback = f"Confirmed. Sending WhatsApp to {target_name}: {msg_text}"
-                gnani_synth_play(feedback, lang=lang_code, play_audio=play_audio)
-                return feedback
-
             elif action_type == "call":
                 phone = clean_phone_number(pending.get("phone", ""))
                 target_name = pending.get("target", "contact")
                 dial_phone = f"+{phone}" if (phone.startswith("91") and len(phone) == 12) else phone
                 run_adb(["shell", "am", "start", "-a", "android.intent.action.CALL", "-d", f"tel:{dial_phone}"], serial=serial)
                 feedback = f"Confirmed. Calling {target_name} now."
-                gnani_synth_play(feedback, lang=lang_code, play_audio=play_audio)
-                return feedback
-
             elif action_type == "open_app":
                 pkg = pending.get("package")
                 app_name = pending.get("name") or pending.get("app_key", "application")
                 run_adb(["shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1"], serial=serial)
                 feedback = f"Confirmed. Opening {app_name}."
-                gnani_synth_play(feedback, lang=lang_code, play_audio=play_audio)
-                return feedback
+            else:
+                feedback = "Action executed."
+
+            timer.exec_ms = (time.perf_counter() - t_exec) * 1000.0
+            t_tts = time.perf_counter()
+            gnani_synth_play(feedback, lang=lang_code, play_audio=play_audio)
+            timer.tts_ms = get_last_tts_latency_ms() or ((time.perf_counter() - t_tts) * 1000.0)
+            timer.report()
+            return feedback
 
         elif pending_mgr.is_negative(raw_input):
             print(f"[Confirmation] ✖ Negative confirmation received ('{raw_input}'). Cancelling pending action.")
             pending_mgr.clear_pending()
             feedback = "Action cancelled."
+            t_tts = time.perf_counter()
             gnani_synth_play(feedback, lang=lang_code, play_audio=play_audio)
+            timer.tts_ms = get_last_tts_latency_ms() or ((time.perf_counter() - t_tts) * 1000.0)
+            timer.report()
             return feedback
         else:
             # Different command entered: clear stale confirmation and proceed
             pending_mgr.clear_pending()
 
-    # 2. Pan-Indian Normalizer
+    # 2. Check for Wake Word Trigger ("Vinda")
+    has_trigger, stripped_command = extract_wake_word(raw_input)
+    if has_trigger:
+        if not stripped_command:
+            prompt = TRIGGER_PROMPTS.get(lang_code, TRIGGER_PROMPTS["en-IN"])
+            print(f"[WakeWord] ✨ Trigger detected! Prompting user: '{prompt}'", flush=True)
+            t_tts = time.perf_counter()
+            gnani_synth_play(prompt, lang=lang_code, play_audio=play_audio)
+            timer.tts_ms = get_last_tts_latency_ms() or ((time.perf_counter() - t_tts) * 1000.0)
+            timer.report()
+            return prompt
+        else:
+            raw_input = stripped_command
+
+    # 3. Pan-Indian Normalizer & Intent Routing
+    t_router_start = time.perf_counter()
     clean = normalize_indian_command(raw_input, lang_code=lang_code)
     # Strip any trailing punctuation (periods from STT, question marks, commas)
     clean = re.sub(r"[.!?,;:\"']+$", "", clean).strip()
+    timer.router_ms = (time.perf_counter() - t_router_start) * 1000.0
 
     print(f"\n======================================================================")
     print(f"⚙️  PROCESSING COMMAND [{lang_code}]: \"{clean}\" (raw: \"{raw_input}\")")
     print(f"======================================================================")
 
-    # 3. Emergency Abort / Stop Intent
-    if (
-        re.search(r"\b(?:stop|cancel|abort|halt|pause|never\s*mind|exit|ruk|roko|bas|aapu|aapandi)\b", clean, re.IGNORECASE)
-        or clean.lower().strip() in ["stop", "cancel", "abort", "halt", "pause", "ఆపు", "ఆపండి", "రుకో", "रोको", "थांबवा", "நிறுத்து", "ನಿಲ್ಲಿಸು", "exit"]
-    ):
-        print(f"[Router:Emergency] 🛑 Stop requested: returning to home screen.")
-        try:
-            requests.post("http://127.0.0.1:8000/api/stop", json={"all": True}, timeout=1.0)
-        except Exception:
-            pass
-        run_adb(["shell", "input", "keyevent", "4"], serial=serial)
-        run_adb(["shell", "input", "keyevent", "3"], serial=serial)
-        msg = "Task stopped. Returning to home screen."
-        gnani_synth_play(msg, lang=lang_code, play_audio=play_audio)
+    # 4. Check for Emergency Abort on normalized text
+    if is_stop_command(clean, lang_code=lang_code):
+        print(f"[Router:Emergency] 🛑 Stop requested: aborting active tasks and returning to home screen.", flush=True)
+        t_abort = time.perf_counter()
+        msg = abort_active_tasks(serial=serial, lang_code=lang_code, play_audio=play_audio)
+        timer.exec_ms = (time.perf_counter() - t_abort) * 1000.0
+        timer.tts_ms = get_last_tts_latency_ms()
+        timer.report()
         return msg
 
-    # 4. Dynamic Parameterized Intent Engine
+    # 5. Dynamic Parameterized Intent Engine
+    t_exec_start = time.perf_counter()
     matched, feedback = match_dynamic_intent(clean, serial=serial, lang_code=lang_code)
     if matched:
+        timer.exec_ms = (time.perf_counter() - t_exec_start) * 1000.0
+        t_tts = time.perf_counter()
         gnani_synth_play(feedback, lang=lang_code, play_audio=play_audio)
+        timer.tts_ms = get_last_tts_latency_ms() or ((time.perf_counter() - t_tts) * 1000.0)
+        timer.report()
         return feedback
 
-    # 5. Static Instant ADB Controls (<100ms)
+    # 6. Static Instant ADB Controls (<100ms)
     matched, feedback = match_static_instant_action(clean, serial=serial)
     if matched:
+        timer.exec_ms = (time.perf_counter() - t_exec_start) * 1000.0
+        t_tts = time.perf_counter()
         gnani_synth_play(feedback, lang=lang_code, play_audio=play_audio)
+        timer.tts_ms = get_last_tts_latency_ms() or ((time.perf_counter() - t_tts) * 1000.0)
+        timer.report()
         return feedback
 
-    # 6. Artemis Autonomous Vision Agent Fallback
+    # 7. Artemis Autonomous Vision Agent Fallback
     print(f"[Router] 👉 Complex or multi-step command -> Dispatching to Autonomous Artemis Agent...")
     feedback = dispatch_artemis_fallback(clean, serial=serial, lang_code=lang_code)
+    timer.exec_ms = (time.perf_counter() - t_exec_start) * 1000.0
+    timer.tts_ms = get_last_tts_latency_ms()
+    timer.report()
     return feedback
+
+
+# ==============================================================================
+# Continuous Always-On Listening Loop with Wake-Word Gating
+# ==============================================================================
+def run_continuous_loop(
+    serial: str = TARGET_DEVICE_SERIAL,
+    lang_code: str = "en-IN",
+    silence_threshold: float = 320.0,
+    silence_duration: float = 1.1,
+    max_timeout: float = 9.0,
+    play_audio: bool = True,
+    require_wake_word: bool = True,
+    wake_word: str = "vinda",
+):
+    """Continuous listening loop with Voice Activity Detection (VAD) and Wake-Word gating."""
+    print("=" * 70, flush=True)
+    print(f"👂 ALWAYS-ON LISTENING ACTIVE // TRIGGER: '{wake_word.upper()}' // LANG: {lang_code}", flush=True)
+    print(f"Ambient conversation without '{wake_word}' will be silently filtered.", flush=True)
+    print("=" * 70, flush=True)
+
+    awaiting_command_until = 0.0
+
+    while True:
+        try:
+            timer = TelemetryTimer()
+
+            # 1. Capture audio chunk via VAD (cycles quickly on silence to remain responsive)
+            audio_file = record_audio(
+                silence_threshold=silence_threshold,
+                silence_duration=silence_duration,
+                max_timeout=max_timeout,
+                output_path=VOICE_COMMAND_FILE,
+                require_speech=True,
+                idle_timeout=2.8,
+            )
+
+            # Check if file has audio
+            if not audio_file or not os.path.exists(audio_file) or os.path.getsize(audio_file) < 1000:
+                time.sleep(0.05)
+                continue
+
+            timer.vad_duration_s = get_last_recorded_duration()
+
+            # 2. Transcribe via Gnani STT
+            t_stt_start = time.perf_counter()
+            transcript = gnani_transcribe(audio_file, lang=lang_code)
+            timer.stt_ms = get_last_stt_latency_ms() or ((time.perf_counter() - t_stt_start) * 1000.0)
+
+            raw = transcript.strip() if transcript else ""
+            if not raw:
+                continue
+
+            now = time.time()
+            in_awaiting_window = (now < awaiting_command_until)
+
+            # 3. Emergency STOP / ABORT check (ALWAYS active, with or without trigger name!)
+            if is_stop_command(raw, lang_code=lang_code):
+                print(f"[Router:Emergency] 🛑 Stop requested: aborting active tasks and returning to Home.", flush=True)
+                abort_active_tasks(serial=serial, lang_code=lang_code, play_audio=play_audio)
+                awaiting_command_until = 0.0
+                timer.report()
+                continue
+
+            # 4. Pending confirmation check
+            if pending_mgr.get_pending():
+                execute_on_device(raw, serial=serial, lang_code=lang_code, play_audio=play_audio, timer=timer)
+                awaiting_command_until = 0.0
+                continue
+
+            # 5. Check for Wake Word Trigger ("Vinda")
+            has_trigger, stripped_command = extract_wake_word(raw, wake_word=wake_word)
+
+            if has_trigger:
+                if not stripped_command:
+                    # User said just "Vinda" or "Hey Vinda"!
+                    prompt = TRIGGER_PROMPTS.get(lang_code, TRIGGER_PROMPTS["en-IN"])
+                    print(f"[WakeWord] ✨ Trigger detected! Prompting user: '{prompt}'", flush=True)
+                    t_tts = time.perf_counter()
+                    gnani_synth_play(prompt, lang=lang_code, play_audio=play_audio)
+                    timer.tts_ms = get_last_tts_latency_ms() or ((time.perf_counter() - t_tts) * 1000.0)
+                    timer.report()
+                    # Grant a 10-second active window where the user can speak the task directly
+                    awaiting_command_until = time.time() + 10.0
+                    continue
+                else:
+                    # User said "Vinda open YouTube" or similar in one sentence!
+                    print(f"[WakeWord] 🚀 Trigger + Command: '{stripped_command}'", flush=True)
+                    awaiting_command_until = 0.0
+                    execute_on_device(stripped_command, serial=serial, lang_code=lang_code, play_audio=play_audio, timer=timer)
+                    continue
+
+            # 6. If inside the awaiting command window, treat raw as the command
+            if in_awaiting_window:
+                print(f"[WakeWord] 🎯 Command received during active window: '{raw}'", flush=True)
+                awaiting_command_until = 0.0
+                execute_on_device(raw, serial=serial, lang_code=lang_code, play_audio=play_audio, timer=timer)
+                continue
+
+            # 7. Ambient conversation filtering
+            if require_wake_word:
+                print(f"[WakeWord] 🤫 Ambient conversation filtered (No '{wake_word}' trigger): \"{raw}\"", flush=True)
+                timer.report()
+                continue
+            else:
+                # If wake word not required, execute directly
+                execute_on_device(raw, serial=serial, lang_code=lang_code, play_audio=play_audio, timer=timer)
+
+        except KeyboardInterrupt:
+            print("[Continuous] Stopped by user.", flush=True)
+            break
+        except Exception as exc:
+            print(f"[Continuous] Error in listening loop: {exc}", flush=True)
+            time.sleep(0.5)
 
 
 # ==============================================================================
@@ -1306,45 +1710,77 @@ def main():
     parser.add_argument("--simulate", "-s", type=str, help="Simulate voice command via text")
     parser.add_argument("--text-only", "-t", type=str, help="Skip audio and route text command")
     parser.add_argument("--lang", "-l", type=str, default="en-IN", help="Language code or name (e.g. te-IN, telugu, hi-IN, en-IN)")
+    parser.add_argument("--voice", "-v", type=str, default=None, help="Timbre TTS voice name (Lakshmi, Shivani, Avinash, Nalini)")
     parser.add_argument("--device", "-d", type=str, default=TARGET_DEVICE_SERIAL, help=f"Device serial (default: {TARGET_DEVICE_SERIAL})")
     parser.add_argument("--silence-threshold", type=float, default=320.0, help="RMS silence threshold for VAD")
-    parser.add_argument("--silence-duration", type=float, default=1.6, help="Silence cutoff duration in seconds")
-    parser.add_argument("--max-timeout", type=float, default=12.0, help="Failsafe max recording timeout")
+    parser.add_argument("--silence-duration", type=float, default=1.1, help="Silence cutoff duration in seconds")
+    parser.add_argument("--max-timeout", type=float, default=10.0, help="Failsafe max recording timeout")
     parser.add_argument("--no-audio-output", action="store_true", help="Bypass speaker audio playback")
+    parser.add_argument("--continuous", "-c", action="store_true", help="Always-listening continuous loop")
+    parser.add_argument("--wake-word", "-w", type=str, default="vinda", help="Trigger word (default: vinda)")
+    parser.add_argument("--require-wake-word", action="store_true", default=False, help="Require trigger word to execute commands; ignore ambient chatter")
     args = parser.parse_args()
 
     canonical_lang = resolve_language(args.lang)
     lang_info = PAN_INDIAN_LANGUAGES.get(canonical_lang, PAN_INDIAN_LANGUAGES["en-IN"])
 
+    global ACTIVE_VOICE
+    if args.voice:
+        ACTIVE_VOICE = args.voice
+    elif not ACTIVE_VOICE:
+        ACTIVE_VOICE = lang_info.get("default_voice", "Lakshmi")
+
     print("=" * 70)
     print("🎙️  PAN-INDIAN MULTILINGUAL VOICE OS // SAMSUNG GALAXY A36")
     print(f"Target Device: {args.device}")
-    print(f"Language: {lang_info['name']} ({canonical_lang}) // Voice: {lang_info['default_voice']}")
+    print(f"Language: {lang_info['name']} ({canonical_lang}) // Voice: {ACTIVE_VOICE}")
     print(f"Memory Contacts: {len(memory.data.get('contacts', {}))} | Device Contacts: {len(contacts_mgr.get_all_contacts())}")
     print("=" * 70)
 
     # Mode 1: Text-only
     if args.text_only:
-        execute_on_device(args.text_only, serial=args.device, lang_code=canonical_lang, play_audio=not args.no_audio_output)
+        timer = TelemetryTimer()
+        execute_on_device(args.text_only, serial=args.device, lang_code=canonical_lang, play_audio=not args.no_audio_output, timer=timer)
         return
 
     # Mode 2: Simulated voice (synthesize command audio first, then test full STT loop)
     if args.simulate:
+        timer = TelemetryTimer()
         print(f"\n[Simulation] Synthesizing command audio for: '{args.simulate}' ({canonical_lang})...")
         synthesize_speech(args.simulate, output_path=VOICE_COMMAND_FILE, lang=canonical_lang)
+        t_stt = time.perf_counter()
         transcript = gnani_transcribe(VOICE_COMMAND_FILE, lang=canonical_lang)
-        execute_on_device(transcript or args.simulate, serial=args.device, lang_code=canonical_lang, play_audio=not args.no_audio_output)
+        timer.stt_ms = get_last_stt_latency_ms() or ((time.perf_counter() - t_stt) * 1000.0)
+        execute_on_device(transcript or args.simulate, serial=args.device, lang_code=canonical_lang, play_audio=not args.no_audio_output, timer=timer)
         return
 
-    # Mode 3: Live Microphone capture with dynamic VAD
+    # Mode 3: Continuous Always-On Listening with Wake Word
+    if args.continuous:
+        run_continuous_loop(
+            serial=args.device,
+            lang_code=canonical_lang,
+            silence_threshold=args.silence_threshold,
+            silence_duration=args.silence_duration,
+            max_timeout=args.max_timeout,
+            play_audio=not args.no_audio_output,
+            require_wake_word=True,
+            wake_word=args.wake_word,
+        )
+        return
+
+    # Mode 4: Live Single-Shot Microphone capture with dynamic VAD
+    timer = TelemetryTimer()
     audio_file = record_audio(
         silence_threshold=args.silence_threshold,
         silence_duration=args.silence_duration,
         max_timeout=args.max_timeout,
         output_path=VOICE_COMMAND_FILE,
     )
+    timer.vad_duration_s = get_last_recorded_duration()
+    t_stt = time.perf_counter()
     transcript = gnani_transcribe(audio_file, lang=canonical_lang)
-    execute_on_device(transcript, serial=args.device, lang_code=canonical_lang, play_audio=not args.no_audio_output)
+    timer.stt_ms = get_last_stt_latency_ms() or ((time.perf_counter() - t_stt) * 1000.0)
+    execute_on_device(transcript, serial=args.device, lang_code=canonical_lang, play_audio=not args.no_audio_output, timer=timer)
 
 
 if __name__ == "__main__":

@@ -7,15 +7,15 @@
   // 1. Global Default Model (Applied to all sub-agents unless overridden below)
   // ------------------------------------------------------------------------------
   "default": {
-    "provider": "openrouter",
-    "model": "google/gemini-2.5-flash",
+    "provider": "google",
+    "model": "gemini-flash-lite-latest",
     "temperature": 0.1,
     "max_tokens": 1024,
     "thinking_level": "low",
     "include_thoughts": false,
     "fallback": {
-      "provider": "openrouter",
-      "model": "openai/gpt-4o-mini",
+      "provider": "google",
+      "model": "gemini-3.5-flash-lite",
       "temperature": 0.1,
       "max_tokens": 1024,
       "thinking_level": "low",
@@ -95,12 +95,12 @@
 
     // 🎬 Video Analyzer: Multimodal screen recording verification and temporal analysis
     "video_analyzer": {
-      "provider": "openrouter",
-      "model": "google/gemini-2.5-flash",
+      "provider": "google",
+      "model": "gemini-flash-lite-latest",
       "max_tokens": 1024,
       "fallback": {
-        "provider": "openrouter",
-        "model": "openai/gpt-4o-mini",
+        "provider": "google",
+        "model": "gemini-3.5-flash-lite",
         "max_tokens": 1024
       }
     },
@@ -110,25 +110,25 @@
     // To achieve accurate [x, y] point and bounding box localization, this node MUST use specialized Gemini ER (Embodied Reasoning / Robotics) models:
     // e.g., "gemini-robotics-er-2-preview". Non-ER models will fail spatial coordinate detection.
     "object_detector": {
-      "provider": "openrouter",
-      "model": "google/gemini-2.5-flash",
+      "provider": "google",
+      "model": "gemini-flash-lite-latest",
       "max_tokens": 1024,
       "fallback": {
-        "provider": "openrouter",
-        "model": "openai/gpt-4o-mini",
+        "provider": "google",
+        "model": "gemini-3.5-flash-lite",
         "max_tokens": 1024
       }
     },
 
     // 🔍 Explorer: Deep element grounding and multi-candidate visual search
     "explorer": {
-      "provider": "openrouter",
-      "model": "google/gemini-2.5-flash",
+      "provider": "google",
+      "model": "gemini-flash-lite-latest",
       "max_tokens": 1024,
       "thinking_level": "medium",
       "fallback": {
-        "provider": "openrouter",
-        "model": "openai/gpt-4o-mini",
+        "provider": "google",
+        "model": "gemini-3.5-flash-lite",
         "max_tokens": 1024
       }
     },
@@ -138,12 +138,12 @@
 
     // 🔽 Hopper: Fast lightweight package name locator
     "hopper": {
-      "provider": "openrouter",
-      "model": "openai/gpt-4o-mini",
+      "provider": "google",
+      "model": "gemini-flash-lite-latest",
       "max_tokens": 1024,
       "fallback": {
-        "provider": "openrouter",
-        "model": "google/gemini-2.5-flash",
+        "provider": "google",
+        "model": "gemini-3.5-flash-lite",
         "max_tokens": 1024
       }
     },
